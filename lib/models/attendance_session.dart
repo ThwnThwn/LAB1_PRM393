@@ -5,6 +5,10 @@ class AttendanceSession {
   final DateTime date;
   String activeOtp; // 6-digit OTP currently valid
   int otpRemainingSeconds; // 10s down to 0
+  String? serverSessionId;
+  bool isOpen;
+  DateTime? openedAt;
+  DateTime? closedAt;
 
   AttendanceSession({
     required this.classCode,
@@ -13,6 +17,10 @@ class AttendanceSession {
     required this.date,
     this.activeOtp = '000000',
     this.otpRemainingSeconds = 10,
+    this.serverSessionId,
+    this.isOpen = false,
+    this.openedAt,
+    this.closedAt,
   });
 
   String get sessionTitle => '$subjectCode - $classCode (Slot $slot)';

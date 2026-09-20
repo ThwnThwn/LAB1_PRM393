@@ -1,121 +1,208 @@
-# Lab 1: FAP Smart Attendance Desktop Application & Chrome Extension
-> **Dự án Lab 1 - Mobile & Desktop Development (PRM/PRN) - Đại học FPT**  
-> Ứng dụng Desktop hỗ trợ giảng viên FPT điểm danh sinh viên thông minh qua **Mã QR động & OTP 10 giây**, kết nối **Google Sheets Database**, thời khóa biểu **FAP Weekly Timetable**, và tiện ích **Chrome Extension tự động tích điểm danh trên FAP**.
+# FAP Attendance Assistant
 
----
+Ứng dụng Lab 1 dạng desktop-first giúp giảng viên quản lý một buổi điểm danh bằng QR và OTP. Giao diện giảng viên được viết bằng Flutter Web, API dùng ASP.NET Core 8, dữ liệu lưu bằng SQLite và cập nhật trực tiếp qua SignalR.
 
-## 🌟 Tính Năng Nổi Bật
+> Đây là dự án phục vụ demo học phần. Ứng dụng chưa phải sản phẩm chính thức của FPT/FAP và chưa nên dùng với dữ liệu thật khi chưa bổ sung đăng nhập, phân quyền và HTTPS.
 
-### 1. 📅 Thời Khóa Biểu Tuần Chuẩn FAP (FAP Timetable Grid)
-- **Giao diện Material 3 hiện đại**: Thiết kế desktop-first, tuân thủ nguyên tắc [Material 3 Color System](https://m3.material.io/styles/color/system/how-the-system-works) với các vai trò màu `surfaceContainer`, `surfaceContainerLow`, v.v.
-- Bảng lịch dạy 7 ngày (Thứ 2 - CN) x 6 Ca học (Slot 1 - Slot 6) với giờ học chuẩn FAP (7:00-9:15, 9:30-11:45,...).
-- Thẻ môn học trực quan, phân màu sắc hài hòa theo mã môn (`PRN232`, `PRM393`, `SWP391`, `EXE201`, `MLN111`, `ITE302c`).
-- Chuyển tuần (`Trước / Sau / Tuần hiện tại`).
+## Chức năng hiện có
 
-### 2. 📌 Chi Tiết Ca Dạy (Activity Detail Modal)
-- Xem thông tin ca dạy chi tiết: Môn học, Nhóm SV/Lớp, Phòng học (NVH 602...), Giảng viên, Buổi học, Link Google Meet.
-- **1-Click bắt đầu điểm danh**: Tự động chuyển thẳng sang màn hình tạo mã QR & OTP 10s của lớp đó.
+- Thời khóa biểu tuần và chọn ca dạy đang thao tác.
+- Import danh sách sinh viên từ CSV hoặc cấu hình Google Sheets.
+- Mở và đóng từng phiên điểm danh.
+- QR và OTP 6 số tự đổi sau mỗi 10 giây.
+- Tạm dừng đồng bộ QR, OTP và bộ đếm; mã đang giữ vẫn hợp lệ cho tới khi tiếp tục.
+- Cổng web để sinh viên quét QR, nhập MSSV, email và OTP.
+- Không giới hạn email FPT; chỉ yêu cầu địa chỉ email hợp lệ.
+- Chống một MSSV điểm danh hai lần trong cùng một phiên.
+- Dashboard số lượng có mặt, trễ, vắng, chưa điểm danh và tỷ lệ chuyên cần.
+- Cập nhật dashboard trực tiếp bằng SignalR, có polling dự phòng.
+- Lưu phiên, roster, trạng thái và nhật ký chỉnh sửa trong SQLite.
+- Xuất CSV riêng cho từng buổi học.
+- Chrome Extension hỗ trợ tích trạng thái lên trang điểm danh FAP.
 
-### 3. ➕ Tạo Lớp / Ca Dạy Mới (Bắt buộc Import Học Viên)
-- Giảng viên tự tạo ca dạy mới: Nhập mã môn, tên môn, mã lớp, slot, thứ, phòng học, giảng viên, học online.
-- **2 Phương thức nạp học viên**:
-  - 📁 **File Excel (.xlsx) / CSV**: Đọc trực tiếp danh sách sinh viên gồm RollNo, FullName, Email.
-  - ☁️ **Google Sheets DB**: Dán link Google Sheets hoặc Web App URL để tải trực tiếp danh sách lớp từ Cloud.
-  - *Bắt buộc phải nạp danh sách học viên trước khi lưu lớp.*
+## Kiến trúc
 
-### 4. 📱 Mã QR & OTP Động Reset Mỗi 10 Giây (Dynamic TOTP)
-- Thuật toán TOTP sinh mã 6 số tự động thay đổi mỗi 10 giây kèm vòng tròn đếm ngược thời gian trực quan.
-- Mã QR kích thước lớn thân thiện với máy chiếu lớp học, chống chụp ảnh điểm danh hộ từ xa.
+| Thành phần | Công nghệ | Địa chỉ mặc định |
+|---|---|---|
+| Dashboard giảng viên | Flutter Web | `http://localhost:3000` |
+| API và SignalR | ASP.NET Core 8 | `http://localhost:8080` |
+| Cổng sinh viên | HTML/CSS/JavaScript | `http://<IP-LAN>:8080/student/` |
+| Database | SQLite | `server/App_Data/attendance.db` |
+| Tiện ích FAP | Chrome Extension Manifest V3 | Thư mục `extension/` |
 
-### 5. 🎓 Cổng Điểm Danh Sinh Viên Độc Lập (Đã Deploy Online)
-- **Tách riêng hoàn toàn khỏi app giảng viên**: Đã deploy trực tiếp lên GitHub Pages:
-  👉 **[https://nakinominh.github.io/lab1-prm/](https://nakinominh.github.io/lab1-prm/)**
-- **Xác thực sinh viên**: Bắt buộc đăng nhập bằng Email Google FPT (`@fpt.edu.vn` / `@fe.edu.vn`).
-- **Tích hợp Camera quét QR**: Sinh viên mở cổng web trên điện thoại, bấm bật camera để quét mã QR trên máy chiếu giảng viên.
-- **Tự động nhận diện**: Trích xuất lớp, slot, mã OTP 10s và đẩy trạng thái có mặt lên Google Sheets DB.
-- **Thẻ Điểm Danh Điện Tử (Digital Pass)**: Xuất thẻ xác thực có dấu tick xanh, MSSV, họ tên, giờ:phút:giây và mã hash SHA-256 chống gian lận.
+Luồng dữ liệu chính:
 
-### 6. 🧩 Chrome Extension Tự Động Tích Điểm Danh Trên FAP
-- Tiện ích mở rộng nằm tại thư mục `extension/` (Manifest V3).
-- Nhúng widget nổi trực tiếp vào website `fap.fpt.edu.vn`.
-- Tự động đọc danh sách sinh viên đã điểm danh thành công từ ứng dụng/Google Sheets.
-- **Tự động tick radio `Present` (P)** cho sinh viên có mặt và **`Absent` (A)** cho sinh viên vắng mặt trên bảng điểm danh của FAP.
-- Nút 1-Click lưu điểm danh lên hệ thống FAP.
+```text
+Giảng viên mở phiên trên Flutter
+            ↓
+ASP.NET Core lưu phiên vào SQLite
+            ↓
+Sinh viên quét QR → nhập OTP → gửi check-in
+            ↓
+SignalR cập nhật dashboard giảng viên
+            ↓
+Đóng phiên → xuất CSV hoặc dùng Extension tích P/A lên FAP
+```
 
-### 7. ☁️ Kết Nối Google Sheets DB (Google Apps Script API)
-- Hoạt động mượt mà ở cả 2 chế độ:
-  - **Local Mode (Chế độ nội bộ)**: Chạy độc lập, lưu trữ tức thời trong bộ nhớ.
-  - **Google Sheets Cloud Mode**: Tích hợp Google Apps Script REST API endpoint (`doGet`/`doPost`), tự động đồng bộ 2 chiều.
-- Cung cấp sẵn mã nguồn Google Apps Script trong app để copy-paste vào Sheets.
+## Yêu cầu môi trường
 
-### 8. 📊 Quản Lý & Xuất Báo Cáo FAP
-- Tìm kiếm MSSV, Họ tên, Email; lọc theo trạng thái (Có mặt, Trễ, Vắng).
-- Giảng viên có thể ghi đè thủ công trạng thái sinh viên.
-- Xuất file `.csv` chuẩn định dạng để tải lên hệ thống FAP.
+- Windows 10/11.
+- Flutter SDK với Dart `>= 3.12.0`.
+- .NET SDK 8.0 trở lên.
+- Google Chrome hoặc Microsoft Edge.
+- Điện thoại và máy giảng viên cùng mạng Wi-Fi nếu demo quét QR.
 
----
+Kiểm tra nhanh:
 
-## 🛠️ Cài Đặt & Chạy Ứng Dụng
+```powershell
+flutter doctor
+dotnet --version
+```
 
-### Yêu cầu môi trường:
-- Flutter SDK (>= 3.13.0)
-- Python 3.x (để chạy local server cho desktop web app & API extension)
-- Trình duyệt Google Chrome / Edge
+## Chạy nhanh trên Windows
 
-### 1. Khởi chạy ứng dụng Desktop Web:
-```bash
-# 1. Cài đặt dependencies
+Tại thư mục dự án:
+
+```powershell
 flutter pub get
-
-# 2. Chạy server web ứng dụng
-python serve_app.py
+.\run.cmd
 ```
-Truy cập ứng dụng tại: 👉 **[http://localhost:8080/](http://localhost:8080/)**
 
-### 2. Cài đặt Chrome Extension vào trình duyệt:
-1. Mở Chrome / Edge, truy cập: `chrome://extensions/`
-2. Bật công tắc **Developer mode** (Chế độ cho nhà phát triển) ở góc trên bên phải.
-3. Bấm **Load unpacked** (Tải tiện ích đã giải nén).
-4. Chọn thư mục `extension/` trong dự án.
-5. Truy cập `https://fap.fpt.edu.vn/` vào trang điểm danh, widget tự động kích hoạt!
+`run.cmd` sẽ tự động:
 
----
+1. Tìm IP LAN của máy.
+2. Khởi động backend C# tại cổng `8080`.
+3. Chờ API sẵn sàng.
+4. Mở Flutter Web bằng Chrome tại cổng cố định `3000`.
+5. Gắn IP LAN vào QR để điện thoại truy cập được cổng sinh viên.
 
-## 📂 Cấu Trúc Thư Mục
+Nhấn `Ctrl+C` trong cửa sổ chạy để dừng Flutter và backend do script khởi tạo.
 
+### Chạy thủ công
+
+Terminal thứ nhất:
+
+```powershell
+dotnet run --project server\Attendance.Api.csproj
 ```
-fap_attendance_app/
-├── lib/
-│   ├── dialogs/
-│   │   ├── activity_detail_dialog.dart  # Dialog chi tiết ca dạy chuẩn FAP
-│   │   └── add_class_dialog.dart        # Dialog tạo lớp mới (Import Excel/Google Sheets)
-│   ├── models/
-│   │   ├── attendance_session.dart      # Model phiên điểm danh
-│   │   ├── fap_class_slot.dart          # Model ca dạy & thời khóa biểu FAP
-│   │   └── student.dart                 # Model sinh viên & trạng thái điểm danh
-│   ├── providers/
-│   │   └── attendance_provider.dart     # Quản lý state tập trung (ChangeNotifier)
-│   ├── screens/
-│   │   ├── extension_guide_screen.dart   # Hướng dẫn & kiểm thử Chrome Extension
-│   │   ├── fap_timetable_screen.dart    # Thời khóa biểu tuần M3
-│   │   ├── student_qr_checkin_screen.dart # Trang SV quét QR & Thẻ điện tử
-│   │   └── teacher_dashboard_screen.dart # Giao diện Desktop Giảng viên
-│   ├── services/
-│   │   ├── google_sheets_service.dart   # Kết nối Google Sheets & Apps Script
-│   │   └── otp_service.dart             # Thuật toán TOTP xoay mã OTP 10s
-│   └── widgets/
-│       ├── qr_generator_widget.dart     # Widget mã QR & đồng hồ đếm ngược 10s
-│       ├── roster_table_widget.dart     # Bảng danh sách sinh viên & tìm kiếm
-│       └── sheets_config_widget.dart    # Cấu hình Google Sheets DB
-├── extension/                           # Mã nguồn Chrome Extension cho FAP
-│   ├── manifest.json
-│   ├── content.js
-│   ├── content.css
-│   ├── popup.html
-│   └── popup.js
-├── serve_app.py                         # Server Python kèm API CORS cho Extension
+
+Terminal thứ hai (thay IP bằng địa chỉ LAN của máy):
+
+```powershell
+flutter run -d chrome --web-port=3000 `
+  --dart-define=ATTENDANCE_SERVER_URL=http://192.168.1.10:8080
+```
+
+Nếu chỉ test trên cùng máy, có thể dùng `http://127.0.0.1:8080`. Không đưa `localhost` vào QR cho điện thoại vì `localhost` trên điện thoại chính là điện thoại, không phải máy giảng viên.
+
+## Luồng demo đề xuất
+
+1. Chọn một ca trên trang **Lịch dạy FAP**.
+2. Vào **Điểm danh QR & OTP 10s** và bấm **Mở điểm danh**.
+3. Sinh viên cùng Wi-Fi quét QR trên màn hình giảng viên.
+4. Sinh viên nhập MSSV, email và OTP đang hiển thị rồi xác nhận.
+5. Tên sinh viên xuất hiện ngay trên dashboard.
+6. Có thể bấm **Tạm dừng QR & OTP** để giữ nguyên QR, OTP và số giây còn lại.
+7. Bấm **Đóng điểm danh**; sinh viên chưa check-in được chuyển thành `ABSENT`.
+8. Tải CSV của phiên hoặc dùng Chrome Extension để hỗ trợ cập nhật FAP.
+
+## Quy đổi trạng thái sang FAP
+
+FAP chỉ có hai trạng thái `Present` và `Absent`, nên Extension quy đổi như sau:
+
+| Trạng thái trong ứng dụng | Trạng thái trên FAP |
+|---|---|
+| `PRESENT` | Present |
+| `LATE` | Present |
+| `ABSENT` | Absent |
+| `NOT CHECKED` | Không nên áp dụng khi phiên còn mở; khi đóng phiên sẽ đổi thành `ABSENT` |
+
+Extension chặn tự động tích khi phiên điểm danh vẫn còn mở. Giảng viên vẫn cần kiểm tra kết quả trước khi bấm nút lưu trên FAP.
+
+## Cài Chrome Extension
+
+1. Mở `chrome://extensions/` hoặc `edge://extensions/`.
+2. Bật **Developer mode**.
+3. Chọn **Load unpacked**.
+4. Chọn thư mục `extension/` của dự án.
+5. Mở trang điểm danh trên FAP.
+6. Nhập Google Apps Script URL nếu dùng Google Sheets; để trống để Extension thử đọc API local tại `http://localhost:8080`.
+7. Đồng bộ dữ liệu, đóng phiên điểm danh rồi mới dùng chức năng tự động tích.
+
+> Extension phụ thuộc vào cấu trúc HTML hiện tại của FAP. Nếu FAP thay đổi giao diện hoặc tên radio button thì selector trong `extension/content.js` có thể cần cập nhật.
+
+## API chính
+
+| Method | Endpoint | Mục đích |
+|---|---|---|
+| `GET` | `/api/health` | Kiểm tra backend |
+| `POST` | `/api/sessions` | Mở phiên và lưu roster |
+| `GET` | `/api/sessions` | Danh sách phiên gần đây |
+| `GET` | `/api/sessions/{id}` | Snapshot dashboard |
+| `POST` | `/api/sessions/{id}/close` | Đóng phiên |
+| `POST` | `/api/sessions/{id}/otp/pause` | Giữ QR, OTP và bộ đếm |
+| `POST` | `/api/sessions/{id}/otp/resume` | Tiếp tục xoay QR và OTP |
+| `POST` | `/api/attendance` | Sinh viên check-in |
+| `PATCH` | `/api/sessions/{id}/attendance/{rollNo}` | Sửa trạng thái thủ công |
+| `GET` | `/api/sessions/{id}/audit` | Xem nhật ký chỉnh sửa |
+| `GET` | `/api/sessions/{id}/export.csv` | Xuất CSV của phiên |
+| SignalR | `/hubs/attendance` | Cập nhật dashboard trực tiếp |
+
+## Cấu trúc thư mục
+
+```text
+lab1-prm/
+├── lib/                         # Flutter dashboard giảng viên
+│   ├── dialogs/                 # Dialog chi tiết và thêm ca dạy
+│   ├── models/                  # Session, sinh viên, thời khóa biểu
+│   ├── providers/               # State và luồng nghiệp vụ
+│   ├── screens/                 # Các màn hình chính
+│   ├── services/                # API, SignalR, OTP, tải file
+│   └── widgets/                 # QR, roster, audit log, Google Sheets
+├── docs/                        # Cổng web dành cho sinh viên
+├── extension/                   # Chrome Extension hỗ trợ FAP
+├── server/                      # ASP.NET Core API
+│   ├── Data/                    # EF Core DbContext
+│   ├── Hubs/                    # SignalR hub
+│   ├── Models/
+│   └── Services/
+├── test/                        # Flutter tests
+├── run.cmd                      # Lệnh chạy nhanh trên Windows
+├── run.ps1                      # Script điều phối backend và Flutter
 └── pubspec.yaml
 ```
 
+## Kiểm thử
+
+```powershell
+flutter test
+flutter analyze
+dotnet build server\Attendance.Api.csproj
+```
+
+`flutter analyze` hiện có thể hiển thị cảnh báo mức `info` cho các file triển khai riêng cho Flutter Web; đây không phải lỗi build.
+
+## Dữ liệu không đưa lên Git
+
+`.gitignore` đã loại các dữ liệu chỉ thuộc máy local:
+
+- `.dart_tool/`, `build/`, `coverage/`.
+- `server/bin/`, `server/obj/`.
+- `server/App_Data/` và các file SQLite.
+- `.env`, `appsettings.Development.json`.
+- cấu hình DevTools/Visual Studio và thư mục export/download thử nghiệm.
+
+Không commit database điểm danh thật, khóa API, credential Google hoặc dữ liệu cá nhân của sinh viên.
+
+## Giới hạn hiện tại
+
+- Dữ liệu thời khóa biểu ban đầu phục vụ demo; chưa tự đăng nhập và lấy lịch trực tiếp từ FAP.
+- Luồng import ổn định hiện tại là CSV; đọc trực tiếp file Excel `.xlsx` chưa được hoàn thiện.
+- API local chưa có cơ chế đăng nhập/phân quyền.
+- HTTP trong mạng LAN phù hợp demo, chưa phù hợp triển khai Internet.
+- Chưa triển khai hosting công khai; điện thoại phải cùng mạng với máy chạy backend.
+- Extension cần được kiểm tra lại nếu FAP thay đổi DOM.
+
 ---
-*Dự án thực hiện cho môn Lab 1 (Desktop Application / PRM / PRN) - Đại học FPT.*
+
+Lab 1 — Desktop Application, FPT University.

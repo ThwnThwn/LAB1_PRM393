@@ -2,20 +2,28 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "FAP Attendance (Chrome - Khuyên Dùng)",
+            "name": "FAP Attendance (Chrome :3000 - Khuyên Dùng)",
             "request": "launch",
             "type": "dart",
             "deviceId": "chrome",
             "program": "lib/main.dart",
-            "flutterMode": "debug"
+            "flutterMode": "debug",
+            "toolArgs": [
+                "--web-port=3000",
+                "--dart-define=ATTENDANCE_SERVER_URL=http://127.0.0.1:8080"
+            ]
         },
         {
-            "name": "FAP Attendance (Edge)",
+            "name": "FAP Attendance (Edge :3000)",
             "request": "launch",
             "type": "dart",
             "deviceId": "edge",
             "program": "lib/main.dart",
-            "flutterMode": "debug"
+            "flutterMode": "debug",
+            "toolArgs": [
+                "--web-port=3000",
+                "--dart-define=ATTENDANCE_SERVER_URL=http://127.0.0.1:8080"
+            ]
         },
         {
             "name": "Mở Chrome localhost:8080 (Web Server)",

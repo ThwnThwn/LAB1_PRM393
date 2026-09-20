@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/attendance_provider.dart';
+import '../services/file_download_helper.dart';
+import '../widgets/audit_log_widget.dart';
 import '../widgets/qr_generator_widget.dart';
 import '../widgets/roster_table_widget.dart';
 import '../widgets/sheets_config_widget.dart';
@@ -16,6 +18,30 @@ class TeacherDashboardScreen extends StatefulWidget {
 
 class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   int _selectedTabIndex = 0;
+
+  Future<void> _exportSessionCsv(AttendanceProvider provider) async {
+    final url = provider.serverExportUrl;
+    if (url == null) return;
+
+    try {
+      final saved = await downloadFile(url);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            saved
+                ? 'Đã xuất file CSV. Bạn có thể mở file bằng Excel.'
+                : 'Đã hủy lưu file CSV.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Không thể xuất CSV: $error')));
+    }
+  }
 
   @override
   void initState() {
@@ -35,13 +61,11 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final provider = Provider.of<AttendanceProvider>(context);
     final notification = provider.lastCheckinNotification;
 
     return Scaffold(
-      backgroundColor: colorScheme.surfaceContainerLowest,
+      backgroundColor: const Color(0xFFF4F6F9),
       body: Row(
         children: [
           // Sidebar Navigation
@@ -56,32 +80,10 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
                 // Live Notification Banner
                 if (notification != null)
-                  Container(
-                    width: double.infinity,
-                    color: Colors.green.shade700,
-                    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.notifications_active_rounded, color: Colors.white, size: 20),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            notification,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13.5,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _buildNotificationBanner(notification),
 
                 // Active View Body
-                Expanded(
-                  child: _buildActiveTabContent(provider),
-                ),
+                Expanded(child: _buildActiveTabContent(provider)),
               ],
             ),
           ),
@@ -90,46 +92,118 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     );
   }
 
+  Widget _buildNotificationBanner(String notification) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.green.shade700, Colors.green.shade600],
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: const Icon(
+              Icons.notifications_active_rounded,
+              color: Colors.white,
+              size: 16,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              notification,
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // SIDEBAR — Gradient Dark Navigation with Animated Indicators
+  // ============================================================
   Widget _buildSidebar(BuildContext context) {
     return Container(
-      width: 260,
-      color: const Color(0xFF1B2A4A),
+      width: 264,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF1E3259), Color(0xFF152242), Color(0xFF0F1A35)],
+        ),
+      ),
       child: Column(
         children: [
           // App Title Logo
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.white12)),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+              ),
             ),
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF36F21),
-                    borderRadius: BorderRadius.circular(10),
+                    gradient: const LinearGradient(
+                      colors: [Color(0xFFF36F21), Color(0xFFFF8A4C)],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFFF36F21).withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                  child: const Icon(Icons.school_rounded, color: Colors.white, size: 24),
+                  child: const Icon(
+                    Icons.school_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
                 ),
                 const SizedBox(width: 12),
-                const Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'FAP ATTENDANCE',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15.5,
-                        letterSpacing: 0.8,
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'FAP ATTENDANCE',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          letterSpacing: 0.8,
+                        ),
                       ),
-                    ),
-                    Text(
-                      'Smart Desktop Assistant',
-                      style: TextStyle(color: Colors.white60, fontSize: 11),
-                    ),
-                  ],
+                      SizedBox(height: 2),
+                      Text(
+                        'Smart Desktop Assistant',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -138,27 +212,58 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
           // Menu Items
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding: const EdgeInsets.symmetric(vertical: 14),
               children: [
-                _buildNavItem(0, 'Lịch dạy FAP (Timetable)', Icons.calendar_month_rounded),
-                _buildNavItem(1, 'Điểm danh QR & OTP 10s', Icons.qr_code_scanner_rounded),
-                _buildNavItem(2, 'Danh sách sinh viên', Icons.people_alt_outlined),
-                _buildNavItem(3, 'Cấu hình Google Sheets', Icons.cloud_outlined),
-                _buildNavItem(4, 'Tiện ích FAP (Extension)', Icons.extension_rounded),
+                _buildNavItem(
+                  0,
+                  'Lịch dạy FAP (Timetable)',
+                  Icons.calendar_month_rounded,
+                ),
+                _buildNavItem(
+                  1,
+                  'Điểm danh QR & OTP 10s',
+                  Icons.qr_code_scanner_rounded,
+                ),
+                _buildNavItem(
+                  2,
+                  'Danh sách sinh viên',
+                  Icons.people_alt_outlined,
+                ),
+                _buildNavItem(
+                  3,
+                  'Cấu hình Google Sheets',
+                  Icons.cloud_outlined,
+                ),
+                _buildNavItem(
+                  4,
+                  'Tiện ích FAP (Extension)',
+                  Icons.extension_rounded,
+                ),
+                _buildNavItem(5, 'Nhật ký chỉnh sửa', Icons.history_rounded),
               ],
             ),
           ),
 
-          // Active Slot Quick Tag in Sidebar
+          // Active Slot Quick Tag — Glassmorphism Card
           Consumer<AttendanceProvider>(
             builder: (context, prov, _) {
+              final selectedSlot = prov.selectedSlot;
               return Container(
-                margin: const EdgeInsets.all(12),
-                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.06),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white12),
+                  gradient: LinearGradient(
+                    colors: [
+                      Colors.white.withValues(alpha: 0.08),
+                      Colors.white.withValues(alpha: 0.03),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.1),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -168,30 +273,56 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                         Container(
                           width: 8,
                           height: 8,
-                          decoration: const BoxDecoration(
-                            color: Color(0xFF22C55E),
+                          decoration: BoxDecoration(
+                            color: prov.isSessionOpen
+                                ? const Color(0xFF22C55E)
+                                : selectedSlot != null
+                                ? const Color(0xFFF36F21)
+                                : Colors.white38,
                             shape: BoxShape.circle,
+                            boxShadow: prov.isSessionOpen
+                                ? [
+                                    BoxShadow(
+                                      color: const Color(
+                                        0xFF22C55E,
+                                      ).withValues(alpha: 0.5),
+                                      blurRadius: 6,
+                                    ),
+                                  ]
+                                : null,
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         const Text(
-                          'Ca dạy đang chọn:',
-                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                          'Ca dạy đang chọn',
+                          style: TextStyle(
+                            color: Colors.white60,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 8),
                     Text(
-                      '${prov.currentSession.subjectCode} - ${prov.currentSession.classCode}',
+                      selectedSlot == null
+                          ? 'Chưa chọn ca dạy'
+                          : '${selectedSlot.subjectCode} - ${selectedSlot.classCode}',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
-                        fontSize: 13,
+                        fontSize: 13.5,
                       ),
                     ),
+                    const SizedBox(height: 2),
                     Text(
-                      'Slot ${prov.currentSession.slot} • ${prov.countTotal} sinh viên',
-                      style: const TextStyle(color: Colors.white54, fontSize: 11),
+                      selectedSlot == null
+                          ? 'Bấm một ca trong thời khóa biểu'
+                          : 'Slot ${selectedSlot.slot} • ${prov.getStudentCountForClass(selectedSlot.classCode)} sinh viên',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.45),
+                        fontSize: 11,
+                      ),
                     ),
                   ],
                 ),
@@ -201,15 +332,43 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
           // Footer info
           Container(
-            padding: const EdgeInsets.all(14),
-            color: Colors.black12,
-            child: const Row(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.15),
+              border: Border(
+                top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+              ),
+            ),
+            child: Row(
               children: [
-                Icon(Icons.verified_rounded, color: Color(0xFFF36F21), size: 16),
-                SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF36F21).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: const Icon(
+                    Icons.verified_rounded,
+                    color: Color(0xFFF36F21),
+                    size: 14,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'FPT University • Lab 1',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: Colors.white54, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Text(
-                  'FPT University • Lab 1',
-                  style: TextStyle(color: Colors.white60, fontSize: 11.5),
+                  'v1.0',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.25),
+                    fontSize: 10,
+                  ),
                 ),
               ],
             ),
@@ -219,49 +378,96 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     );
   }
 
+  // Sidebar Nav Item with animated left indicator
   Widget _buildNavItem(int index, String label, IconData icon) {
     final isSelected = _selectedTabIndex == index;
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      decoration: BoxDecoration(
-        color: isSelected ? const Color(0xFFF36F21) : Colors.transparent,
-        borderRadius: BorderRadius.circular(10),
-      ),
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
       child: Material(
         color: Colors.transparent,
-        child: ListTile(
-          leading: Icon(icon, color: isSelected ? Colors.white : Colors.grey[400], size: 20),
-          title: Text(
-            label,
-            style: TextStyle(
-              color: isSelected ? Colors.white : Colors.grey[300],
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 13.5,
-            ),
-          ),
-          dense: true,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        child: InkWell(
           onTap: () {
             setState(() {
               _selectedTabIndex = index;
             });
           },
+          borderRadius: BorderRadius.circular(10),
+          hoverColor: Colors.white.withValues(alpha: 0.05),
+          splashColor: const Color(0xFFF36F21).withValues(alpha: 0.12),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            decoration: BoxDecoration(
+              color: isSelected
+                  ? const Color(0xFFF36F21).withValues(alpha: 0.12)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                // Animated left indicator bar
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 250),
+                  width: 3,
+                  height: isSelected ? 22 : 0,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF36F21),
+                    borderRadius: BorderRadius.circular(2),
+                    boxShadow: isSelected
+                        ? [
+                            BoxShadow(
+                              color: const Color(
+                                0xFFF36F21,
+                              ).withValues(alpha: 0.4),
+                              blurRadius: 6,
+                            ),
+                          ]
+                        : [],
+                  ),
+                ),
+                SizedBox(width: isSelected ? 10 : 4),
+                Icon(
+                  icon,
+                  color: isSelected
+                      ? const Color(0xFFF36F21)
+                      : Colors.white.withValues(alpha: 0.5),
+                  size: 19,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      color: isSelected
+                          ? Colors.white
+                          : Colors.white.withValues(alpha: 0.65),
+                      fontWeight: isSelected
+                          ? FontWeight.w700
+                          : FontWeight.w400,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );
   }
 
+  // ============================================================
+  // HEADER — Clean Layout with Better Spacing
+  // ============================================================
   Widget _buildHeader(BuildContext context, AttendanceProvider provider) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
+    final selectedSlot = provider.selectedSlot;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        border: Border(
-          bottom: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.4)),
-        ),
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -272,43 +478,150 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
               Container(
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1B2A4A).withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(8),
+                  color: const Color(0xFF1B2A4A).withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.class_outlined, color: Color(0xFF1B2A4A), size: 20),
+                child: const Icon(
+                  Icons.class_outlined,
+                  color: Color(0xFF1B2A4A),
+                  size: 20,
+                ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Text(
-                '${provider.currentSession.subjectCode} - Lớp ${provider.currentSession.classCode}',
+                selectedSlot == null
+                    ? 'Chưa chọn ca dạy'
+                    : '${selectedSlot.subjectCode} - Lớp ${selectedSlot.classCode}',
                 style: const TextStyle(
-                  fontSize: 16.5,
-                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
                   color: Color(0xFF1B2A4A),
                 ),
               ),
-              const SizedBox(width: 10),
-              Chip(
-                label: Text('Slot ${provider.currentSession.slot}'),
-                backgroundColor: const Color(0xFFF36F21).withValues(alpha: 0.1),
-                side: const BorderSide(color: Color(0xFFF36F21)),
-                padding: const EdgeInsets.symmetric(horizontal: 6),
-                visualDensity: VisualDensity.compact,
-              )
+              if (selectedSlot != null) ...[
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF36F21).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: const Color(0xFFF36F21).withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Text(
+                    'Slot ${selectedSlot.slot}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFF36F21),
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: provider.isSessionOpen
+                      ? const Color(0xFF22C55E).withValues(alpha: 0.08)
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: provider.isSessionOpen
+                        ? const Color(0xFF22C55E).withValues(alpha: 0.3)
+                        : Colors.grey.shade300,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: provider.isSessionOpen
+                            ? const Color(0xFF22C55E)
+                            : Colors.grey,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      selectedSlot == null
+                          ? 'CHƯA CHỌN'
+                          : provider.isSessionOpen
+                          ? 'ĐANG MỞ'
+                          : 'ĐÃ ĐÓNG',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: provider.isSessionOpen
+                            ? const Color(0xFF16A34A)
+                            : Colors.grey.shade600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
 
           // Action Buttons
           Row(
             children: [
+              if (_selectedTabIndex == 1)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        provider.sessionOperationInProgress ||
+                            selectedSlot == null
+                        ? null
+                        : provider.isSessionOpen
+                        ? provider.closeAttendanceSession
+                        : provider.openAttendanceSession,
+                    icon: provider.sessionOperationInProgress
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Icon(
+                            provider.isSessionOpen
+                                ? Icons.stop_circle_outlined
+                                : Icons.play_circle_outline,
+                          ),
+                    label: Text(
+                      provider.isSessionOpen
+                          ? 'Đóng điểm danh'
+                          : 'Mở điểm danh',
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: provider.isSessionOpen
+                          ? Colors.red[700]
+                          : Colors.green[700],
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
               if (_selectedTabIndex != 1)
                 Padding(
                   padding: const EdgeInsets.only(right: 10),
                   child: OutlinedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _selectedTabIndex = 1;
-                      });
-                    },
+                    onPressed: selectedSlot == null
+                        ? null
+                        : () {
+                            setState(() {
+                              _selectedTabIndex = 1;
+                            });
+                          },
                     icon: const Icon(Icons.qr_code_2, size: 18),
                     label: const Text('Mở trang QR'),
                     style: OutlinedButton.styleFrom(
@@ -320,34 +633,14 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
 
               // Export FAP Report Button
               ElevatedButton.icon(
-                onPressed: () {
-                  final csv = provider.exportFapCsv();
-                  showDialog(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      title: const Text('Xuất Báo Cáo Điểm Danh (FAP Format)'),
-                      content: SizedBox(
-                        width: 500,
-                        height: 300,
-                        child: SingleChildScrollView(
-                          child: SelectableText(csv),
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('Đóng'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+                onPressed: provider.serverSessionId == null
+                    ? null
+                    : () => _exportSessionCsv(provider),
                 icon: const Icon(Icons.file_download, size: 18),
-                label: const Text('Xuất báo cáo FAP'),
+                label: const Text('Tải CSV phiên này'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green[700],
                   foregroundColor: Colors.white,
-                  elevation: 1,
                 ),
               ),
             ],
@@ -357,6 +650,9 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     );
   }
 
+  // ============================================================
+  // TAB CONTENT
+  // ============================================================
   Widget _buildActiveTabContent(AttendanceProvider provider) {
     switch (_selectedTabIndex) {
       case 0:
@@ -367,10 +663,13 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Left Pane: Dynamic QR & OTP Widget
+              // Left Pane: Dynamic QR & OTP Widget (scrollable to guarantee no clipping)
               const SizedBox(
                 width: 360,
-                child: QrGeneratorWidget(),
+                child: SingleChildScrollView(
+                  physics: BouncingScrollPhysics(),
+                  child: QrGeneratorWidget(),
+                ),
               ),
               const SizedBox(width: 20),
 
@@ -378,16 +677,50 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
               Expanded(
                 child: Column(
                   children: [
-                    // Stat Cards Grid
+                    // Stat Cards Grid — Premium Redesigned
                     Row(
                       children: [
-                        _buildStatCard('Tổng sinh viên', '${provider.countTotal}', Colors.blue),
-                        const SizedBox(width: 12),
-                        _buildStatCard('Có mặt', '${provider.countPresent}', Colors.green),
-                        const SizedBox(width: 12),
-                        _buildStatCard('Trễ', '${provider.countLate}', Colors.orange),
-                        const SizedBox(width: 12),
-                        _buildStatCard('Vắng', '${provider.countAbsent}', Colors.red),
+                        _buildStatCard(
+                          'Tổng sinh viên',
+                          '${provider.countTotal}',
+                          const Color(0xFF3B82F6),
+                          Icons.people_alt_rounded,
+                        ),
+                        const SizedBox(width: 10),
+                        _buildStatCard(
+                          'Có mặt',
+                          '${provider.countPresent}',
+                          const Color(0xFF22C55E),
+                          Icons.check_circle_rounded,
+                        ),
+                        const SizedBox(width: 10),
+                        _buildStatCard(
+                          'Trễ',
+                          '${provider.countLate}',
+                          const Color(0xFFF59E0B),
+                          Icons.access_time_filled_rounded,
+                        ),
+                        const SizedBox(width: 10),
+                        _buildStatCard(
+                          'Vắng',
+                          '${provider.countAbsent}',
+                          const Color(0xFFEF4444),
+                          Icons.cancel_rounded,
+                        ),
+                        const SizedBox(width: 10),
+                        _buildStatCard(
+                          'Chưa điểm danh',
+                          '${provider.countNotChecked}',
+                          const Color(0xFF6B7280),
+                          Icons.radio_button_unchecked,
+                        ),
+                        const SizedBox(width: 10),
+                        _buildStatCard(
+                          'Chuyên cần',
+                          '${provider.attendancePercentage.toStringAsFixed(1)}%',
+                          const Color(0xFF0D9488),
+                          Icons.trending_up_rounded,
+                        ),
                       ],
                     ),
                     const SizedBox(height: 20),
@@ -408,36 +741,93 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       case 3:
         return const SheetsConfigWidget();
       case 4:
+        return const ExtensionGuideScreen();
+      case 5:
+        return const AuditLogWidget();
       default:
         return const ExtensionGuideScreen();
     }
   }
 
-  Widget _buildStatCard(String label, String value, Color color) {
+  // ============================================================
+  // STAT CARD — Premium with Icon, Gradient Accent & Border
+  // ============================================================
+  Widget _buildStatCard(
+    String label,
+    String value,
+    Color color,
+    IconData icon,
+  ) {
     return Expanded(
-      child: Card(
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                label,
-                style: TextStyle(color: Colors.grey[600], fontSize: 13),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                value,
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w800,
-                  color: color,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Row(
+          children: [
+            // Left accent bar
+            Container(
+              width: 4,
+              height: 80,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [color, color.withValues(alpha: 0.4)],
                 ),
               ),
-            ],
-          ),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Flexible(
+                          child: Text(
+                            label,
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: color.withValues(alpha: 0.08),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(icon, size: 16, color: color),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      value,
+                      style: TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: color,
+                        height: 1,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -100,6 +100,7 @@
 
     // In-memory student attendance map from sheet / app
     let attendanceMap = {};
+    let sessionIsOpen = false;
 
     fetchBtn.addEventListener('click', async () => {
       const url = apiUrlInput.value.trim();
@@ -113,21 +114,17 @@
           const res = await fetch(url + '?action=getAttendance');
           const data = await res.json();
           records = data.students || [];
+          sessionIsOpen = data.isOpen === true;
         } else {
           // Fallback: Fetch from local Desktop App server if running
           try {
             const res = await fetch('http://localhost:8080/api/attendance');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const data = await res.json();
             records = data.students || [];
+            sessionIsOpen = data.isOpen === true;
           } catch (err) {
-            // Use mock sample data if standalone
-            records = [
-              { rollNo: 'SE182173', status: 'PRESENT' },
-              { rollNo: 'SE171234', status: 'PRESENT' },
-              { rollNo: 'SE180987', status: 'PRESENT' },
-              { rollNo: 'SE183456', status: 'ABSENT' },
-              { rollNo: 'SE185111', status: 'PRESENT' }
-            ];
+            throw new Error('Không kết nối được ASP.NET Core API tại localhost:8080.');
           }
         }
 
@@ -148,6 +145,11 @@
     });
 
     autofillBtn.addEventListener('click', () => {
+      if (sessionIsOpen) {
+        alert('Phiên điểm danh vẫn đang mở. Hãy đóng phiên trên app giảng viên trước khi tự động tích P/A lên FAP.');
+        return;
+      }
+
       // Find table rows on FAP
       const table = document.querySelector('table');
       if (!table) {
@@ -177,7 +179,7 @@
               const isPresentRadio = val === 'P' || val === 'PRESENT' || val === '1' || name.includes('PRESENT');
               const isAbsentRadio = val === 'A' || val === 'ABSENT' || val === '0' || name.includes('ABSENT');
 
-              if (status === 'PRESENT' && isPresentRadio) {
+              if ((status === 'PRESENT' || status === 'LATE') && isPresentRadio) {
                 radio.checked = true;
                 radio.dispatchEvent(new Event('change', { bubbles: true }));
                 row.style.backgroundColor = '#E8F5E9'; // Light green highlight

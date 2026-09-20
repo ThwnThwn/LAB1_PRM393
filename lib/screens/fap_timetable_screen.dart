@@ -14,6 +14,9 @@ class FapTimetableScreen extends StatelessWidget {
   static const Color _fptOrange = Color(0xFFF36F21);
 
   void _onSlotTapped(BuildContext context, FapClassSlot slot) {
+    final provider = Provider.of<AttendanceProvider>(context, listen: false);
+    if (!provider.selectTimetableSlot(slot)) return;
+
     showDialog(
       context: context,
       builder: (ctx) => ActivityDetailDialog(slot: slot),
@@ -21,16 +24,11 @@ class FapTimetableScreen extends StatelessWidget {
   }
 
   void _onAddNewClassTapped(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (ctx) => const AddClassDialog(),
-    );
+    showDialog(context: context, builder: (ctx) => const AddClassDialog());
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
     final provider = Provider.of<AttendanceProvider>(context);
 
     return Padding(
@@ -46,15 +44,13 @@ class FapTimetableScreen extends StatelessWidget {
           Expanded(
             child: Container(
               decoration: BoxDecoration(
-                color: colorScheme.surface,
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: colorScheme.outlineVariant.withValues(alpha: 0.4),
-                ),
+                border: Border.all(color: Colors.grey.shade200),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 12,
+                    blurRadius: 16,
                     offset: const Offset(0, 4),
                   ),
                 ],
@@ -80,11 +76,9 @@ class FapTimetableScreen extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLow,
+        color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-        ),
+        border: Border.all(color: Colors.grey.shade200),
       ),
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
@@ -154,18 +148,37 @@ class FapTimetableScreen extends StatelessWidget {
                       onPressed: () => provider.previousWeek(),
                     ),
                     const SizedBox(width: 6),
-                    const Icon(
-                      Icons.date_range_rounded,
-                      size: 16,
-                      color: _fptOrange,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      provider.currentWeekLabel,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                        letterSpacing: 0.3,
+                    // Clickable date range to open calendar picker
+                    Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: () => _showDatePickerDialog(context, provider),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.date_range_rounded,
+                                size: 16,
+                                color: _fptOrange,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                provider.currentWeekLabel,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14,
+                                  letterSpacing: 0.3,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -178,22 +191,6 @@ class FapTimetableScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              OutlinedButton.icon(
-                onPressed: () => provider.goToCurrentWeek(),
-                icon: const Icon(Icons.today_rounded, size: 16),
-                label: const Text('Tuần hiện tại'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colorScheme.onSurface,
-                  side: BorderSide(
-                    color: colorScheme.outlineVariant.withValues(alpha: 0.6),
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                ),
-              ),
             ],
           ),
 
@@ -203,10 +200,7 @@ class FapTimetableScreen extends StatelessWidget {
             icon: const Icon(Icons.add_rounded, size: 20),
             label: const Text(
               'Thêm lớp dạy mới',
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 13.5,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13.5),
             ),
             style: FilledButton.styleFrom(
               backgroundColor: _fptOrange,
@@ -226,16 +220,21 @@ class FapTimetableScreen extends StatelessWidget {
   // ---------------------------------------------------------------------------
   // Grid Layout
   // ---------------------------------------------------------------------------
-  Widget _buildTimetableGrid(BuildContext context, AttendanceProvider provider) {
+  Widget _buildTimetableGrid(
+    BuildContext context,
+    AttendanceProvider provider,
+  ) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        const double minTotalWidth = 1020.0;
-        final double totalWidth = constraints.maxWidth > minTotalWidth
-            ? constraints.maxWidth
-            : minTotalWidth;
-
+        const double minGridWidth = 1020.0;
+        const double scrollHorizontalPadding = 16.0;
+        final availableGridWidth =
+            constraints.maxWidth - scrollHorizontalPadding;
+        final gridWidth = availableGridWidth > minGridWidth
+            ? availableGridWidth
+            : minGridWidth;
         const double slotColWidth = 110.0;
-        final double dayColWidth = (totalWidth - slotColWidth - 16) / 7;
+        final double dayColWidth = (gridWidth - slotColWidth) / 7;
 
         return SingleChildScrollView(
           scrollDirection: Axis.vertical,
@@ -243,7 +242,7 @@ class FapTimetableScreen extends StatelessWidget {
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
-              width: totalWidth - 16,
+              width: gridWidth,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -253,7 +252,13 @@ class FapTimetableScreen extends StatelessWidget {
 
                   // Slot rows 1 to 6
                   for (int slot = 1; slot <= 6; slot++) ...[
-                    _buildSlotRow(context, provider, slot, slotColWidth, dayColWidth),
+                    _buildSlotRow(
+                      context,
+                      provider,
+                      slot,
+                      slotColWidth,
+                      dayColWidth,
+                    ),
                     if (slot < 6) const SizedBox(height: 6),
                   ],
                 ],
@@ -278,47 +283,46 @@ class FapTimetableScreen extends StatelessWidget {
     return Row(
       children: [
         // Top-left corner cell: Slot & Time label
-        Container(
+        SizedBox(
+          key: const ValueKey('slot-header-cell'),
           width: slotColWidth,
           height: 64,
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainer,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-            ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.schedule_rounded,
-                size: 18,
-                color: colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(height: 3),
-              Text(
-                'Slot / Giờ',
-                style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                  color: colorScheme.onSurfaceVariant,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: Container(
+              decoration: BoxDecoration(
+                color: colorScheme.surfaceContainer,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.35),
                 ),
               ),
-            ],
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.schedule_rounded,
+                    size: 18,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    'Slot / Giờ',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
 
         // 7 Day headers (Mon=1 ... Sun=7)
         for (int dayOfWeek = 1; dayOfWeek <= 7; dayOfWeek++) ...[
-          _buildDayHeaderCell(
-            context,
-            provider,
-            dayOfWeek,
-            dayColWidth,
-            now,
-          ),
+          _buildDayHeaderCell(context, provider, dayOfWeek, dayColWidth, now),
         ],
       ],
     );
@@ -333,80 +337,112 @@ class FapTimetableScreen extends StatelessWidget {
   ) {
     final colorScheme = Theme.of(context).colorScheme;
     final date = provider.getDateForDay(dayOfWeek);
-    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+    final isToday =
+        date.year == now.year && date.month == now.month && date.day == now.day;
+    final isSelectedDay = provider.selectedSlot?.dayOfWeek == dayOfWeek;
+    final isHighlighted = isToday || isSelectedDay;
     final dayName = FapClassSlot.getDayName(dayOfWeek);
     final dayShort = FapClassSlot.getDayShortName(dayOfWeek);
     final formattedDate =
         '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}';
 
-    return Container(
+    return SizedBox(
+      key: ValueKey('day-header-$dayOfWeek'),
       width: width,
       height: 64,
-      margin: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: isToday
-            ? _fptOrange.withValues(alpha: 0.08)
-            : colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: isToday ? _fptOrange : colorScheme.outlineVariant.withValues(alpha: 0.35),
-          width: isToday ? 1.5 : 1.0,
-        ),
-      ),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Container(
+          decoration: BoxDecoration(
+            color: isHighlighted
+                ? _fptOrange.withValues(alpha: 0.08)
+                : colorScheme.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isHighlighted
+                  ? _fptOrange
+                  : colorScheme.outlineVariant.withValues(alpha: 0.35),
+              width: isHighlighted ? 1.5 : 1.0,
+            ),
+          ),
+          child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(
-                dayName,
-                style: TextStyle(
-                  fontWeight: FontWeight.w800,
-                  fontSize: 13.5,
-                  color: isToday ? _fptOrange : colorScheme.onSurface,
-                ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    dayName,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13.5,
+                      color: isHighlighted ? _fptOrange : colorScheme.onSurface,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '($dayShort)',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                      color: isHighlighted
+                          ? _fptOrange.withValues(alpha: 0.85)
+                          : colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(width: 4),
-              Text(
-                '($dayShort)',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  color: isToday
-                      ? _fptOrange.withValues(alpha: 0.85)
-                      : colorScheme.onSurfaceVariant,
+              const SizedBox(height: 3),
+              if (isToday)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _fptOrange,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$formattedDate • Hôm nay',
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                )
+              else if (isSelectedDay)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _fptOrange,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    formattedDate,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white,
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  formattedDate,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
             ],
           ),
-          const SizedBox(height: 3),
-          if (isToday)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: _fptOrange,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '$formattedDate • Hôm nay',
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                ),
-              ),
-            )
-          else
-            Text(
-              formattedDate,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                color: colorScheme.onSurfaceVariant,
-              ),
-            ),
-        ],
+        ),
       ),
     );
   }
@@ -422,80 +458,97 @@ class FapTimetableScreen extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final slotTime = FapClassSlot.getSlotTimeRange(slotNumber);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Slot Header Cell (Left column)
-        Container(
-          width: slotColWidth,
-          height: 115,
-          margin: const EdgeInsets.symmetric(horizontal: 2),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: colorScheme.outlineVariant.withValues(alpha: 0.35),
-            ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Slot Header Cell (Left column)
+          SizedBox(
+            key: ValueKey('slot-row-cell-$slotNumber'),
+            width: slotColWidth,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 115),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  'Slot $slotNumber',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                    color: colorScheme.onSurface,
+                  color: colorScheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: colorScheme.outlineVariant.withValues(alpha: 0.35),
                   ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.access_time_rounded,
-                    size: 11,
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 4),
-                  Flexible(
-                    child: Text(
-                      slotTime,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      textAlign: TextAlign.center,
+                child: Center(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'Slot $slotNumber',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              color: colorScheme.onSurface,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.access_time_rounded,
+                              size: 11,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              slotTime,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
-                ],
+                ),
               ),
-            ],
+            ),
           ),
-        ),
 
-        // 7 Day Cells (for Mon=1 ... Sun=7)
-        for (int dayOfWeek = 1; dayOfWeek <= 7; dayOfWeek++) ...[
-          _buildDaySlotCell(
-            context,
-            provider,
-            dayOfWeek,
-            slotNumber,
-            dayColWidth,
-          ),
+          // 7 Day Cells (for Mon=1 ... Sun=7)
+          for (int dayOfWeek = 1; dayOfWeek <= 7; dayOfWeek++) ...[
+            _buildDaySlotCell(
+              context,
+              provider,
+              dayOfWeek,
+              slotNumber,
+              dayColWidth,
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -510,18 +563,87 @@ class FapTimetableScreen extends StatelessWidget {
     final slots = provider.getSlotsForCell(dayOfWeek, slotNumber);
 
     return SizedBox(
+      key: ValueKey('day-slot-$dayOfWeek-$slotNumber'),
       width: width,
-      height: 115,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 2.0),
         child: slots.isEmpty
             ? const _EmptySlotCell()
             : _TimetableSlotCard(
                 slot: slots.first,
+                isSelected: provider.selectedSlot?.id == slots.first.id,
                 onTap: () => _onSlotTapped(context, slots.first),
               ),
       ),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Date Picker Dialog — shows a calendar for quick date navigation
+  // ---------------------------------------------------------------------------
+  Future<void> _showDatePickerDialog(
+    BuildContext context,
+    AttendanceProvider provider,
+  ) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: today,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2030),
+      selectableDayPredicate: (date) {
+        // Disable (gray out) past dates — only today and future are selectable
+        return !date.isBefore(today);
+      },
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: _fptOrange,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Colors.grey.shade800,
+            ),
+            datePickerTheme: DatePickerThemeData(
+              backgroundColor: Colors.white,
+              headerBackgroundColor: _fptOrange,
+              headerForegroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              dayStyle: const TextStyle(
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
+              ),
+              todayBorder: const BorderSide(color: _fptOrange, width: 1.5),
+              todayForegroundColor: WidgetStateProperty.all(_fptOrange),
+              dayForegroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.disabled)) {
+                  return Colors.grey.shade400;
+                }
+                if (states.contains(WidgetState.selected)) {
+                  return Colors.white;
+                }
+                return Colors.grey.shade800;
+              }),
+              dayBackgroundColor: WidgetStateProperty.resolveWith((states) {
+                if (states.contains(WidgetState.selected)) {
+                  return _fptOrange;
+                }
+                return null;
+              }),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (selectedDate != null) {
+      provider.goToDate(selectedDate);
+    }
   }
 }
 
@@ -530,10 +652,12 @@ class FapTimetableScreen extends StatelessWidget {
 // =============================================================================
 class _TimetableSlotCard extends StatefulWidget {
   final FapClassSlot slot;
+  final bool isSelected;
   final VoidCallback onTap;
 
   const _TimetableSlotCard({
     required this.slot,
+    required this.isSelected,
     required this.onTap,
   });
 
@@ -548,7 +672,10 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final subjectColor = _getSubjectColorScheme(widget.slot.subjectCode, context);
+    final subjectColor = _getSubjectColorScheme(
+      widget.slot.subjectCode,
+      context,
+    );
 
     return MouseRegion(
       cursor: SystemMouseCursors.click,
@@ -560,17 +687,19 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           margin: const EdgeInsets.symmetric(vertical: 2.0),
-          height: 111,
+          constraints: const BoxConstraints(minHeight: 111),
           decoration: BoxDecoration(
             color: _isHovered
                 ? subjectColor.container
                 : subjectColor.container.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: _isHovered ? subjectColor.primary : subjectColor.border,
-              width: _isHovered ? 1.5 : 1.0,
+              color: widget.isSelected || _isHovered
+                  ? subjectColor.primary
+                  : subjectColor.border,
+              width: widget.isSelected ? 2.0 : (_isHovered ? 1.5 : 1.0),
             ),
-            boxShadow: _isHovered
+            boxShadow: widget.isSelected || _isHovered
                 ? [
                     BoxShadow(
                       color: subjectColor.primary.withValues(alpha: 0.22),
@@ -592,10 +721,7 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Left brand vertical accent bar
-                Container(
-                  width: 4.5,
-                  color: subjectColor.primary,
-                ),
+                Container(width: 4.5, color: subjectColor.primary),
 
                 // Card Content Body
                 Expanded(
@@ -625,7 +751,9 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
                               Container(
                                 padding: const EdgeInsets.all(2.5),
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF0284C7).withValues(alpha: 0.15),
+                                  color: const Color(
+                                    0xFF0284C7,
+                                  ).withValues(alpha: 0.15),
                                   borderRadius: BorderRadius.circular(4),
                                 ),
                                 child: const Icon(
@@ -641,7 +769,10 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
                               decoration: BoxDecoration(
                                 color: colorScheme.surface,
                                 borderRadius: BorderRadius.circular(4),
@@ -675,7 +806,9 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
                                     child: Text(
                                       widget.slot.room.isNotEmpty
                                           ? widget.slot.room
-                                          : (widget.slot.isOnline ? 'Online' : '—'),
+                                          : (widget.slot.isOnline
+                                                ? 'Online'
+                                                : '—'),
                                       style: TextStyle(
                                         fontSize: 11,
                                         fontWeight: FontWeight.w500,
@@ -697,18 +830,23 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
                             Icon(
                               Icons.access_time_rounded,
                               size: 11,
-                              color: colorScheme.onSurfaceVariant.withValues(alpha: 0.75),
+                              color: colorScheme.onSurfaceVariant.withValues(
+                                alpha: 0.75,
+                              ),
                             ),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
                                 widget.slot.slotTime.isNotEmpty
                                     ? widget.slot.slotTime
-                                    : FapClassSlot.getSlotTimeRange(widget.slot.slot),
+                                    : FapClassSlot.getSlotTimeRange(
+                                        widget.slot.slot,
+                                      ),
                                 style: TextStyle(
                                   fontSize: 10.5,
                                   fontWeight: FontWeight.normal,
-                                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.8),
+                                  color: colorScheme.onSurfaceVariant
+                                      .withValues(alpha: 0.8),
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -741,7 +879,7 @@ class _EmptySlotCell extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 2.0),
-      height: 111,
+      constraints: const BoxConstraints(minHeight: 111),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(10),
@@ -890,7 +1028,10 @@ const List<_SubjectColorScheme> _subjectPalettes = [
   ),
 ];
 
-_SubjectColorScheme _getSubjectColorScheme(String subjectCode, BuildContext context) {
+_SubjectColorScheme _getSubjectColorScheme(
+  String subjectCode,
+  BuildContext context,
+) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
   int hash = 0;
   final code = subjectCode.trim().toUpperCase();

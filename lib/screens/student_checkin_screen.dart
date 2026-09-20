@@ -22,7 +22,7 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
     if (email.isEmpty || otp.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Vui lòng nhập đầy đủ Email FPT và mã OTP!'),
+          content: Text('Vui lòng nhập đầy đủ email và mã OTP!'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -95,8 +95,8 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
                   decoration: InputDecoration(
-                    labelText: 'Email FPT của sinh viên',
-                    hintText: 'ví dụ: minhnbse182173@fpt.edu.vn',
+                    labelText: 'Email của sinh viên',
+                    hintText: 'ví dụ: sinhvien@gmail.com',
                     prefixIcon: const Icon(Icons.email_outlined),
                     border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                   ),

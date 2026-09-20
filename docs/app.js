@@ -1,6 +1,6 @@
 /**
  * FAP Student Attendance Portal - Logic & Authentication Script
- * Supports FPT Google Login, Camera QR Scanning, 10s OTP Verification, and Digital Ticket Generation.
+ * Supports student identification, camera QR scanning, 10s OTP verification, and digital ticket generation.
  */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentUser = null;
   let html5QrScanner = null;
   let activeSession = {
+    sessionId: '',
     classCode: 'SE1801',
     subjectCode: 'PRN231',
     slot: 1,
@@ -22,8 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const userDisplayEmail = document.getElementById('user-display-email');
   const btnLogout = document.getElementById('btn-logout');
 
-  const btnGoogleLogin = document.getElementById('btn-google-login');
-  const emailLoginForm = document.getElementById('email-login-form');
+  const studentLoginForm = document.getElementById('student-login-form');
+  const inputRollNo = document.getElementById('input-roll-no');
   const inputEmail = document.getElementById('input-email');
   const quickChips = document.querySelectorAll('.chip');
 
@@ -44,10 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Parse URL Parameters (if student scanned QR code directly with phone camera)
   const urlParams = new URLSearchParams(window.location.search);
+  const configuredApiBase = urlParams.get('api') || '';
+  if (urlParams.get('session')) activeSession.sessionId = urlParams.get('session');
   if (urlParams.get('class')) activeSession.classCode = urlParams.get('class');
   if (urlParams.get('subject')) activeSession.subjectCode = urlParams.get('subject');
   if (urlParams.get('slot')) activeSession.slot = parseInt(urlParams.get('slot'), 10) || 1;
-  if (urlParams.get('otp')) activeSession.otp = urlParams.get('otp');
 
   // Update class display text
   classInfoDisplay.textContent = `${activeSession.subjectCode} • Lớp ${activeSession.classCode} (Slot ${activeSession.slot})`;
@@ -70,34 +72,30 @@ document.addEventListener('DOMContentLoaded', () => {
   // Handle Quick Chips
   quickChips.forEach(chip => {
     chip.addEventListener('click', () => {
+      inputRollNo.value = chip.dataset.rollNo;
       inputEmail.value = chip.dataset.email;
       inputEmail.focus();
     });
   });
 
-  // Google Login Action
-  btnGoogleLogin.addEventListener('click', () => {
-    // Prompt or simulate Google Single Sign-On with @fpt.edu.vn verification
-    const emailPrompt = prompt('Xác thực tài khoản Google FPT (@fpt.edu.vn):', 'minhnbse182173@fpt.edu.vn');
-    if (emailPrompt) {
-      loginWithEmail(emailPrompt.trim(), 'Bùi Nhật Minh');
-    }
-  });
-
-  // Email Login Form Submit
-  emailLoginForm.addEventListener('submit', (e) => {
+  studentLoginForm.addEventListener('submit', (e) => {
     e.preventDefault();
+    const rollNo = inputRollNo.value.trim().toUpperCase();
     const email = inputEmail.value.trim().toLowerCase();
-    loginWithEmail(email);
+    loginWithStudent(rollNo, email);
   });
 
-  function loginWithEmail(email, optionalName) {
-    if (!email.endsWith('@fpt.edu.vn') && !email.endsWith('@fe.edu.vn')) {
-      alert('Vui lòng sử dụng địa chỉ Email FPT University hợp lệ (@fpt.edu.vn hoặc @fe.edu.vn)!');
+  function loginWithStudent(rollNo, email, optionalName) {
+    if (!rollNo) {
+      alert('Vui lòng nhập MSSV.');
       return;
     }
 
-    const rollNo = email.split('@')[0].toUpperCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      alert('Vui lòng nhập một địa chỉ email hợp lệ.');
+      return;
+    }
+
     const name = optionalName || (rollNo === 'SE182173' ? 'Bùi Nhật Minh' : rollNo);
 
     currentUser = {
@@ -119,14 +117,12 @@ document.addEventListener('DOMContentLoaded', () => {
     authView.style.display = 'none';
     checkinView.style.display = 'block';
 
-    // If OTP was pre-filled from URL (scanned QR), auto-submit attendance immediately
-    if (activeSession.otp) {
-      inputOtp.value = activeSession.otp;
+    // QR identifies the attendance session only. OTP must always be entered
+    // manually from the lecturer screen so a stale QR never submits an old OTP.
+    inputOtp.value = '';
+    activeSession.otp = '';
+    if (activeSession.sessionId) {
       switchTab('otp');
-      // Auto-submit after a brief delay so user sees the transition
-      setTimeout(() => {
-        performAttendance(activeSession.otp);
-      }, 500);
     } else {
       startCameraScanner();
     }
@@ -197,29 +193,28 @@ document.addEventListener('DOMContentLoaded', () => {
     console.log('[QR Scanned]:', decodedText);
     stopCameraScanner();
 
-    // Parse payload: e.g. FAP_ATTENDANCE|PRN231|SE1801|Slot1|123456 or URL
+    // Parse session metadata only. Never pre-fill or auto-submit the OTP.
     if (decodedText.includes('FAP_ATTENDANCE')) {
       const parts = decodedText.split('|');
-      if (parts.length >= 5) {
+      if (parts.length >= 4) {
         activeSession.subjectCode = parts[1];
         activeSession.classCode = parts[2];
         activeSession.slot = parseInt(parts[3].replace('Slot', ''), 10) || 1;
-        activeSession.otp = parts[4];
       }
-    } else if (decodedText.includes('otp=')) {
+    } else if (decodedText.includes('session=')) {
       try {
         const url = new URL(decodedText);
-        activeSession.otp = url.searchParams.get('otp') || '';
+        activeSession.sessionId = url.searchParams.get('session') || '';
         if (url.searchParams.get('class')) activeSession.classCode = url.searchParams.get('class');
         if (url.searchParams.get('subject')) activeSession.subjectCode = url.searchParams.get('subject');
+        if (url.searchParams.get('slot')) activeSession.slot = parseInt(url.searchParams.get('slot'), 10) || 1;
       } catch (e) {}
-    } else if (/^\d{6}$/.test(decodedText.trim())) {
-      activeSession.otp = decodedText.trim();
     }
 
-    // Auto submit attendance with scanned data
-    inputOtp.value = activeSession.otp;
-    performAttendance(activeSession.otp);
+    classInfoDisplay.textContent = `${activeSession.subjectCode} • Lớp ${activeSession.classCode} (Slot ${activeSession.slot})`;
+    activeSession.otp = '';
+    inputOtp.value = '';
+    switchTab('otp');
   }
 
   function onScanError(errorMessage) {
@@ -239,48 +234,54 @@ document.addEventListener('DOMContentLoaded', () => {
   // Perform Attendance Verification
   async function performAttendance(otp) {
     if (!currentUser) {
-      alert('Vui lòng đăng nhập bằng Email FPT trước!');
+      alert('Vui lòng nhập thông tin sinh viên trước!');
       return;
     }
 
     btnSubmitOtp.disabled = true;
     btnSubmitOtp.innerHTML = '<span>Đang xác thực điểm danh...</span>';
 
-    // Simulate / Call API check-in
     try {
-      // Optional: push to Google Sheets or Local API
-      try {
-        await fetch('http://localhost:8080/api/attendance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: currentUser.email,
-            rollNo: currentUser.rollNo,
-            fullName: currentUser.fullName,
-            classCode: activeSession.classCode,
-            otp: otp
-          })
-        });
-      } catch (e) {
-        // Standalone mode is always allowed
+      const apiUrl = configuredApiBase
+        ? `${configuredApiBase.replace(/\/$/, '')}/api/attendance`
+        : `${window.location.origin}/api/attendance`;
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: currentUser.email,
+          rollNo: currentUser.rollNo,
+          fullName: currentUser.fullName,
+          sessionId: activeSession.sessionId,
+          classCode: activeSession.classCode,
+          subjectCode: activeSession.subjectCode,
+          slot: activeSession.slot,
+          otp: otp
+        })
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok || result.success !== true) {
+        throw new Error(result.message || 'Không thể xác nhận điểm danh với máy chủ.');
       }
 
-      // Success: Show Digital Ticket
-      displaySuccessTicket();
+      displaySuccessTicket(result.student);
+    } catch (error) {
+      alert(error.message || 'Không thể kết nối tới máy chủ điểm danh.');
     } finally {
       btnSubmitOtp.disabled = false;
       btnSubmitOtp.innerHTML = '<span>🚀 Xác Nhận Điểm Danh</span>';
     }
   }
 
-  function displaySuccessTicket() {
+  function displaySuccessTicket(serverStudent) {
     stopCameraScanner();
     checkinView.style.display = 'none';
     ticketView.style.display = 'block';
 
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')} ${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
-    const hash = `FAP-${currentUser.rollNo}-${now.getTime().toString(16).toUpperCase().slice(-6)}`;
+    const hash = serverStudent?.confirmationCode || `FAP-${currentUser.rollNo}-${now.getTime().toString(16).toUpperCase().slice(-6)}`;
 
     document.getElementById('ticket-student-name').textContent = currentUser.fullName;
     document.getElementById('ticket-student-roll').textContent = currentUser.rollNo;

@@ -7,7 +7,7 @@ class OtpService {
     final now = customTime ?? DateTime.now();
     final epochSeconds = now.millisecondsSinceEpoch ~/ 1000;
     final timeWindow = epochSeconds ~/ otpDurationSeconds;
-    
+
     return _calculateOtp(timeWindow);
   }
 
@@ -19,7 +19,8 @@ class OtpService {
     final now = DateTime.now();
     final epochSeconds = now.millisecondsSinceEpoch ~/ 1000;
     final currentWindow = epochSeconds ~/ otpDurationSeconds;
-    final previousWindow = currentWindow - 1; // 10s grace period for network latency
+    final previousWindow =
+        currentWindow - 1; // 10s grace period for network latency
 
     final validCurrent = _calculateOtp(currentWindow);
     final validPrevious = _calculateOtp(previousWindow);
@@ -36,15 +37,17 @@ class OtpService {
   }
 
   static String _calculateOtp(int windowIndex) {
-    // Hash-like deterministic computation using windowIndex and secret seed
+    // Keep every step in signed 32-bit range so Dart Web, Dart VM and C#
+    // always generate the same value.
     int hash = 5381;
     final combinedStr = '$_seedKey:$windowIndex';
     for (int i = 0; i < combinedStr.length; i++) {
-      hash = ((hash << 5) + hash) + combinedStr.codeUnitAt(i);
+      hash = (((hash << 5) + hash) + combinedStr.codeUnitAt(i)).toSigned(32);
     }
-    
+
     // Ensure positive integer and convert to 6 digits
-    final code = (hash.abs() % 900000) + 100000;
+    final positiveHash = hash == -0x80000000 ? 0x7fffffff : hash.abs();
+    final code = (positiveHash % 900000) + 100000;
     return code.toString();
   }
 }

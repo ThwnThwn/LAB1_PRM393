@@ -45,7 +45,7 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
     if (email.isEmpty || otp.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Vui lòng nhập Email FPT và mã OTP!'),
+          content: Text('Vui lòng nhập email và mã OTP!'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -269,14 +269,14 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
 
                 // Email Input Field
                 const Text(
-                  'Email FPT của sinh viên:',
+                  'Email của sinh viên:',
                   style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: deepBlue),
                 ),
                 const SizedBox(height: 6),
                 TextField(
                   controller: _emailController,
                   decoration: InputDecoration(
-                    hintText: 'ví dụ: minhnbse182173@fpt.edu.vn',
+                    hintText: 'ví dụ: sinhvien@gmail.com',
                     prefixIcon: const Icon(Icons.email_outlined, color: fptOrange),
                     filled: true,
                     fillColor: const Color(0xFFF8FAFC),
@@ -384,120 +384,257 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
     );
   }
 
-  /// Digital Attendance Ticket (Thẻ Điểm Danh Điện Tử)
+  // ===========================================================================
+  // Digital Attendance Ticket (Thẻ Điểm Danh Điện Tử) — Redesigned
+  // ===========================================================================
   Widget _buildSuccessTicket(BuildContext context, AttendanceProvider provider) {
     final student = _checkinResult!['student'] as Student?;
     final session = provider.currentSession;
     final now = DateTime.now();
-    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+    final timeStr =
+        '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')} ${now.day.toString().padLeft(2, '0')}/${now.month.toString().padLeft(2, '0')}/${now.year}';
+
+    const emerald = Color(0xFF059669);
+    const emeraldDark = Color(0xFF065F46);
+    const deepBlue = Color(0xFF1B2A4A);
+
+    // Slot time range text
+    String slotTimeRange = 'Slot ${session.slot}';
+    const slotTimes = {
+      1: '7:00 - 9:15',
+      2: '9:30 - 11:45',
+      3: '12:30 - 14:45',
+      4: '15:00 - 17:15',
+      5: '17:30 - 19:45',
+      6: '20:00 - 22:15',
+    };
+    if (slotTimes.containsKey(session.slot)) {
+      slotTimeRange = 'Slot ${session.slot} (${slotTimes[session.slot]})';
+    }
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(28),
-        border: Border.all(color: const Color(0xFF22C55E), width: 1.8),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: emerald.withValues(alpha: 0.4), width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.green.withValues(alpha: 0.12),
-            blurRadius: 30,
-            offset: const Offset(0, 10),
+            color: emerald.withValues(alpha: 0.10),
+            blurRadius: 32,
+            offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header Verified Banner
+          // ─── Header: Verified Banner with gradient ───
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
+            padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 24),
             decoration: const BoxDecoration(
-              color: Color(0xFF059669),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+              gradient: LinearGradient(
+                colors: [Color(0xFF059669), Color(0xFF047857)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(22.5)),
             ),
             child: Column(
               children: [
+                // Check icon with glow ring
                 Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: const BoxDecoration(
-                    color: Colors.white,
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
                     shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.3),
+                      width: 3,
+                    ),
                   ),
-                  child: const Icon(Icons.check_rounded, color: Color(0xFF059669), size: 36),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: emerald,
+                      size: 32,
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 const Text(
                   'ĐIỂM DANH THÀNH CÔNG',
                   style: TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w900,
-                    fontSize: 20,
-                    letterSpacing: 1,
+                    fontSize: 19,
+                    letterSpacing: 1.2,
                   ),
                 ),
-                const SizedBox(height: 4),
-                const Text(
-                  'FPT University • Thẻ Điểm Danh Điện Tử Hợp Lệ',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Text(
+                    'Thẻ Điểm Danh Điện Tử FPT University',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
 
-          // Ticket Body Details
+          // ─── Ticket Tear/Perforation Line ───
+          Container(
+            color: const Color(0xFFF0FDF4),
+            child: Row(
+              children: List.generate(
+                60,
+                (i) => Expanded(
+                  child: Container(
+                    height: 1.5,
+                    color: i.isEven ? const Color(0xFFA7F3D0) : Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          // ─── Ticket Body: Student Details ───
           Padding(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
             child: Column(
               children: [
-                _buildTicketRow('Sinh viên:', student?.fullName ?? 'Sinh viên FPT', isBold: true),
-                const Divider(height: 20),
-                _buildTicketRow('Mã số sinh viên (MSSV):', student?.rollNo ?? 'SE182173', isBold: true),
-                const Divider(height: 20),
-                _buildTicketRow('Email:', student?.email ?? _emailController.text),
-                const Divider(height: 20),
-                _buildTicketRow('Môn học & Lớp:', '${session.subjectCode} • ${session.classCode}'),
-                const Divider(height: 20),
-                _buildTicketRow('Ca học / Slot:', 'Slot ${session.slot}'),
-                const Divider(height: 20),
-                _buildTicketRow('Thời gian ghi nhận:', timeStr),
-                const Divider(height: 20),
-                _buildTicketRow('Mã chống gian lận:', _digitalTicketHash ?? 'FAP-VERIFIED-2026', isMonospace: true),
-                const SizedBox(height: 24),
+                _buildTicketInfoRow(
+                  icon: Icons.person_rounded,
+                  label: 'Sinh viên:',
+                  value: student?.fullName ?? 'Sinh viên FPT',
+                  isBold: true,
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
+                  icon: Icons.badge_rounded,
+                  label: 'MSSV:',
+                  value: student?.rollNo ?? 'N/A',
+                  isBold: true,
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
+                  icon: Icons.email_rounded,
+                  label: 'Email:',
+                  value: student?.email ?? _emailController.text,
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
+                  icon: Icons.menu_book_rounded,
+                  label: 'Môn học & Lớp:',
+                  value: '${session.subjectCode} - Lớp ${session.classCode}',
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
+                  icon: Icons.access_time_filled_rounded,
+                  label: 'Ca học (Slot):',
+                  value: slotTimeRange,
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
+                  icon: Icons.calendar_today_rounded,
+                  label: 'Thời gian điểm danh:',
+                  value: timeStr,
+                  isBold: true,
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
+                  icon: Icons.verified_user_rounded,
+                  label: 'Mã xác thực số:',
+                  value: _digitalTicketHash ?? 'FAP-VERIFIED-2026',
+                  isMonospace: true,
+                  valueColor: const Color(0xFF0F766E),
+                ),
 
-                // Sync Status Confirmation
+                const SizedBox(height: 20),
+
+                // ─── Sync Status Confirmation ───
                 Container(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
                     color: const Color(0xFFECFDF5),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFA7F3D0)),
                   ),
-                  child: const Row(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.cloud_done_rounded, color: Color(0xFF059669), size: 20),
-                      SizedBox(width: 10),
-                      Expanded(
+                      Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: BoxDecoration(
+                          color: emerald.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.cloud_done_rounded,
+                          color: emerald,
+                          size: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      const Expanded(
                         child: Text(
-                          'Trạng thái: Đã cập nhật CÓ MẶT trên app giảng viên & Google Sheets DB.',
+                          'Đã ghi nhận trên hệ thống điểm danh ASP.NET Core',
                           style: TextStyle(
-                            color: Color(0xFF065F46),
-                            fontSize: 12,
+                            color: emeraldDark,
+                            fontSize: 12.5,
                             fontWeight: FontWeight.w600,
+                            height: 1.4,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
+
                 const SizedBox(height: 20),
 
-                // Action to Scan Another or Go Back
-                OutlinedButton.icon(
-                  onPressed: _resetForNewScan,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Quét mã lượt mới / Đổi sinh viên'),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                // ─── Reset / New Scan Button ───
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _resetForNewScan,
+                    icon: const Icon(Icons.swap_horiz_rounded, size: 20),
+                    label: const Text(
+                      'Điểm danh ca học khác / Đổi sinh viên',
+                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.grey.shade700,
+                      side: BorderSide(color: Colors.grey.shade300),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -508,27 +645,64 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
     );
   }
 
-  Widget _buildTicketRow(String label, String value, {bool isBold = false, bool isMonospace = false}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: TextStyle(color: Colors.grey[700], fontSize: 13),
-        ),
-        Flexible(
-          child: Text(
-            value,
-            textAlign: TextAlign.right,
-            style: TextStyle(
-              fontSize: 13.5,
-              fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
-              fontFamily: isMonospace ? 'monospace' : null,
-              color: isMonospace ? const Color(0xFF0F766E) : const Color(0xFF1B2A4A),
+  // ---------------------------------------------------------------------------
+  // Helper Widgets for Ticket
+  // ---------------------------------------------------------------------------
+  Widget _buildTicketDivider() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Divider(height: 1, color: Colors.grey.shade200),
+    );
+  }
+
+  Widget _buildTicketInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    bool isBold = false,
+    bool isMonospace = false,
+    Color valueColor = const Color(0xFF1B2A4A),
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Leading icon
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(icon, size: 16, color: Colors.grey.shade500),
+          ),
+          const SizedBox(width: 8),
+          // Fixed-width label for alignment
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: Colors.grey.shade600,
+                fontSize: 13,
+                height: 1.3,
+              ),
             ),
           ),
-        ),
-      ],
+          const SizedBox(width: 8),
+          // Flexible right-aligned value
+          Expanded(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 13.5,
+                fontWeight: isBold ? FontWeight.w700 : FontWeight.w600,
+                fontFamily: isMonospace ? 'monospace' : null,
+                color: valueColor,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

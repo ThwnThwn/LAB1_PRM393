@@ -33,6 +33,30 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# .NET build outputs
+**/bin/
+**/obj/
+server/App_Data/
+
+# Local databases and generated SQLite files
+*.db
+*.db-shm
+*.db-wal
+
+# Local development settings and secrets
+.env
+.env.*
+!.env.example
+**/appsettings.Development.json
+devtools_options.yaml
+.vs/
+*.suo
+*.user
+
+# Local exports and downloads
+exports/
+downloads/
+
 # Symbolication related
 app.*.symbols
 
