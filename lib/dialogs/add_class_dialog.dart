@@ -6,7 +6,7 @@ import '../providers/attendance_provider.dart';
 import '../models/fap_class_slot.dart';
 
 /// Material 3 Dialog for adding a new class/slot to the lecturer's timetable.
-/// Enforces inserting students either via Excel/CSV or Google Sheets as required.
+/// Enforces inserting students either via CSV or Google Sheets as required.
 class AddClassDialog extends StatefulWidget {
   const AddClassDialog({super.key});
 
@@ -39,7 +39,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
   int _selectedDayOfWeek = 1; // 1 = Thứ 2, ..., 7 = CN
   bool _isOnline = false;
 
-  // Import mode: 0 = File (Excel/CSV), 1 = Google Sheets DB
+  // Import mode: 0 = CSV file, 1 = Google Sheets DB
   int _importMethodIndex = 0;
 
   // Import file & sheet state
@@ -58,8 +58,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
     final classCode = _classCodeController.text.trim();
     if (_cachedCsvContent != null && classCode.isNotEmpty) {
       final provider = Provider.of<AttendanceProvider>(context, listen: false);
-      provider.importStudentsForClass(classCode, _cachedCsvContent!);
-      final count = provider.getStudentCountForClass(classCode);
+      final result = provider.parseStudentCsv(_cachedCsvContent!, classCode);
+      final count = result.importedCount;
       if (count != _importedStudentCount) {
         setState(() {
           _importedStudentCount = count;
@@ -80,13 +80,13 @@ class _AddClassDialogState extends State<AddClassDialog> {
     super.dispose();
   }
 
-  /// Pick CSV/Excel file and import students
+  /// Pick a CSV file and import students.
   Future<void> _pickAndImportFile() async {
     setState(() => _isLoading = true);
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'xlsx'],
+        allowedExtensions: ['csv'],
         withData: true,
       );
 
@@ -114,27 +114,23 @@ class _AddClassDialogState extends State<AddClassDialog> {
       if (!mounted) return;
       final provider = Provider.of<AttendanceProvider>(context, listen: false);
 
+      final importResult = provider.parseStudentCsv(content, classCode);
       _cachedCsvContent = content;
       _pickedFileName = file.name;
+      setState(() {
+        _importedStudentCount = importResult.importedCount;
+        _isLoading = false;
+      });
 
-      if (classCode.isNotEmpty) {
-        provider.importStudentsForClass(classCode, content);
-        final count = provider.getStudentCountForClass(classCode);
-        setState(() {
-          _importedStudentCount = count;
-          _isLoading = false;
-        });
-      } else {
-        final lines = const LineSplitter()
-            .convert(content)
-            .where((l) => l.trim().isNotEmpty)
-            .toList();
-        final count = lines.length > 1 ? lines.length - 1 : lines.length;
-        setState(() {
-          _importedStudentCount = count;
-          _isLoading = false;
-        });
-      }
+      final warningParts = <String>[
+        if (importResult.skippedRows > 0)
+          '${importResult.skippedRows} dòng thiếu dữ liệu',
+        if (importResult.duplicateRows > 0)
+          '${importResult.duplicateRows} dòng trùng',
+      ];
+      final warning = warningParts.isEmpty
+          ? ''
+          : ' Bỏ qua ${warningParts.join(' và ')}.';
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -142,12 +138,19 @@ class _AddClassDialogState extends State<AddClassDialog> {
             backgroundColor: const Color(0xFF2E7D32),
             content: Row(
               children: [
-                const Icon(Icons.check_circle_outline, color: Colors.white, size: 20),
+                const Icon(
+                  Icons.check_circle_outline,
+                  color: Colors.white,
+                  size: 20,
+                ),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Đã import thành công "${file.name}" (${_importedStudentCount ?? 0} sinh viên)',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500),
+                    'Đã import "${file.name}" (${importResult.importedCount} sinh viên).$warning',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],
@@ -158,10 +161,11 @@ class _AddClassDialogState extends State<AddClassDialog> {
     } catch (e) {
       setState(() => _isLoading = false);
       if (mounted) {
+        final message = e is FormatException ? e.message : e.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.red[800],
-            content: Text('Lỗi khi đọc file: $e'),
+            content: Text('Không thể import CSV: $message'),
           ),
         );
       }
@@ -176,7 +180,9 @@ class _AddClassDialogState extends State<AddClassDialog> {
     if (sheetUrl.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Vui lòng nhập đường dẫn Google Sheets hoặc Web App URL!'),
+          content: Text(
+            'Vui lòng nhập đường dẫn Google Sheets hoặc Web App URL!',
+          ),
           backgroundColor: Colors.orange,
         ),
       );
@@ -203,14 +209,18 @@ class _AddClassDialogState extends State<AddClassDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: const Color(0xFF2E7D32),
-            content: Text('Đã nạp thành công $count sinh viên từ Google Sheets!'),
+            content: Text(
+              'Đã nạp thành công $count sinh viên từ Google Sheets!',
+            ),
           ),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             backgroundColor: Colors.red,
-            content: Text('Không thể tải sinh viên từ Google Sheet. Vui lòng kiểm tra quyền chia sẻ hoặc Web App URL.'),
+            content: Text(
+              'Không thể tải sinh viên từ Google Sheet. Vui lòng kiểm tra quyền chia sẻ hoặc Web App URL.',
+            ),
           ),
         );
       }
@@ -218,12 +228,12 @@ class _AddClassDialogState extends State<AddClassDialog> {
   }
 
   /// Handle Save Action
-  void _onSave() {
+  Future<void> _onSave() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
 
-    // Strict validation: Lecturer must insert students via Excel/CSV or Google Sheets
+    // Strict validation: Lecturer must insert students via CSV or Google Sheets
     if (_importedStudentCount == null || _importedStudentCount! <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -234,7 +244,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Bắt buộc: Giảng viên phải nạp danh sách học viên bằng file Excel/CSV hoặc Google Sheets!',
+                  'Bắt buộc: Giảng viên phải nạp danh sách học viên bằng file CSV hoặc Google Sheets!',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
@@ -255,8 +265,24 @@ class _AddClassDialogState extends State<AddClassDialog> {
 
     // Import students roster if CSV was picked
     if (_cachedCsvContent != null) {
-      provider.importStudentsForClass(classCode, _cachedCsvContent!);
+      setState(() => _isLoading = true);
+      try {
+        await provider.importStudentsForClass(classCode, _cachedCsvContent!);
+      } catch (error) {
+        if (mounted) {
+          setState(() => _isLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              backgroundColor: Colors.red[800],
+              content: Text('Không thể lưu danh sách vào database: $error'),
+            ),
+          );
+        }
+        return;
+      }
     }
+
+    if (!mounted) return;
 
     final newSlot = FapClassSlot(
       id: 'custom-${DateTime.now().millisecondsSinceEpoch}',
@@ -287,17 +313,25 @@ class _AddClassDialogState extends State<AddClassDialog> {
       labelText: labelText,
       hintText: hintText,
       prefixIcon: prefixIcon != null
-          ? Icon(prefixIcon, size: 20, color: const Color(0xFF1B2A4A).withValues(alpha: 0.7))
+          ? Icon(
+              prefixIcon,
+              size: 20,
+              color: const Color(0xFF1B2A4A).withValues(alpha: 0.7),
+            )
           : null,
       filled: true,
-      fillColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      fillColor: theme.colorScheme.surfaceContainerHighest.withValues(
+        alpha: 0.35,
+      ),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
         borderSide: BorderSide(color: theme.colorScheme.outlineVariant),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),
+        borderSide: BorderSide(
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+        ),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -313,9 +347,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
     const deepBlue = Color(0xFF1B2A4A);
 
     return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(28),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       clipBehavior: Clip.antiAlias,
       elevation: 6,
       backgroundColor: Colors.white,
@@ -363,11 +395,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Thiết lập thông tin môn học và import danh sách sinh viên (Excel / Google Sheets)',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.black54,
-                          ),
+                          'Thiết lập thông tin môn học và import danh sách sinh viên (CSV / Google Sheets)',
+                          style: TextStyle(fontSize: 13, color: Colors.black54),
                         ),
                       ],
                     ),
@@ -417,7 +446,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                 hintText: 'VD: PRN231, SWP391',
                                 prefixIcon: Icons.bookmark_border_rounded,
                               ),
-                              validator: (val) => (val == null || val.trim().isEmpty)
+                              validator: (val) =>
+                                  (val == null || val.trim().isEmpty)
                                   ? 'Vui lòng nhập mã môn học'
                                   : null,
                             ),
@@ -429,10 +459,12 @@ class _AddClassDialogState extends State<AddClassDialog> {
                               controller: _subjectNameController,
                               decoration: _buildInputDecoration(
                                 labelText: 'Tên môn học *',
-                                hintText: 'VD: Building Cross-Platform Back-End...',
+                                hintText:
+                                    'VD: Building Cross-Platform Back-End...',
                                 prefixIcon: Icons.menu_book_rounded,
                               ),
-                              validator: (val) => (val == null || val.trim().isEmpty)
+                              validator: (val) =>
+                                  (val == null || val.trim().isEmpty)
                                   ? 'Vui lòng nhập tên môn học'
                                   : null,
                             ),
@@ -455,7 +487,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                 hintText: 'VD: SE1917, IA1802',
                                 prefixIcon: Icons.groups_outlined,
                               ),
-                              validator: (val) => (val == null || val.trim().isEmpty)
+                              validator: (val) =>
+                                  (val == null || val.trim().isEmpty)
                                   ? 'Vui lòng nhập mã lớp / nhóm SV'
                                   : null,
                             ),
@@ -569,22 +602,36 @@ class _AddClassDialogState extends State<AddClassDialog> {
                           Expanded(
                             flex: 2,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 6,
+                              ),
                               decoration: BoxDecoration(
-                                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: 0.35),
                                 borderRadius: BorderRadius.circular(12),
                                 border: Border.all(
-                                  color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.6),
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .outlineVariant
+                                      .withValues(alpha: 0.6),
                                 ),
                               ),
                               child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   Row(
                                     children: [
                                       Icon(
-                                        _isOnline ? Icons.videocam_rounded : Icons.videocam_off_outlined,
-                                        color: _isOnline ? fptOrange : Colors.grey[600],
+                                        _isOnline
+                                            ? Icons.videocam_rounded
+                                            : Icons.videocam_off_outlined,
+                                        color: _isOnline
+                                            ? fptOrange
+                                            : Colors.grey[600],
                                         size: 20,
                                       ),
                                       const SizedBox(width: 8),
@@ -627,21 +674,29 @@ class _AddClassDialogState extends State<AddClassDialog> {
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
-                              color: _importedStudentCount != null && _importedStudentCount! > 0
+                              color:
+                                  _importedStudentCount != null &&
+                                      _importedStudentCount! > 0
                                   ? Colors.green.withValues(alpha: 0.15)
                                   : Colors.red.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              _importedStudentCount != null && _importedStudentCount! > 0
+                              _importedStudentCount != null &&
+                                      _importedStudentCount! > 0
                                   ? 'Đã nạp: $_importedStudentCount SV'
                                   : 'Chưa có SV',
                               style: TextStyle(
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.bold,
-                                color: _importedStudentCount != null && _importedStudentCount! > 0
+                                color:
+                                    _importedStudentCount != null &&
+                                        _importedStudentCount! > 0
                                     ? Colors.green.shade800
                                     : Colors.red.shade800,
                               ),
@@ -651,13 +706,13 @@ class _AddClassDialogState extends State<AddClassDialog> {
                       ),
                       const SizedBox(height: 10),
 
-                      // Method Selector: File Excel/CSV vs Google Sheets
+                      // Method Selector: CSV vs Google Sheets
                       SegmentedButton<int>(
                         segments: const [
                           ButtonSegment<int>(
                             value: 0,
                             icon: Icon(Icons.file_present_rounded),
-                            label: Text('File Excel / CSV'),
+                            label: Text('File CSV'),
                           ),
                           ButtonSegment<int>(
                             value: 1,
@@ -674,7 +729,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
 
                       // Upload Area based on Selected Method
                       if (_importMethodIndex == 0) ...[
-                        // File Excel / CSV Picker Card
+                        // CSV file picker card
                         Card(
                           elevation: 0,
                           shape: RoundedRectangleBorder(
@@ -705,16 +760,19 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                   child: Icon(
                                     Icons.upload_file_rounded,
                                     size: 30,
-                                    color: _pickedFileName != null ? Colors.green.shade700 : fptOrange,
+                                    color: _pickedFileName != null
+                                        ? Colors.green.shade700
+                                        : fptOrange,
                                   ),
                                 ),
                                 const SizedBox(width: 16),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       const Text(
-                                        'Import file Excel (.xlsx) hoặc CSV',
+                                        'Import file CSV',
                                         style: TextStyle(
                                           fontSize: 14.5,
                                           fontWeight: FontWeight.bold,
@@ -723,7 +781,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                       ),
                                       const SizedBox(height: 3),
                                       Text(
-                                        _pickedFileName ?? 'Chọn file danh sách sinh viên gồm RollNo, FullName, Email',
+                                        _pickedFileName ??
+                                            'Hỗ trợ StudentCode/FullName hoặc RollNo/FullName/Email',
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey[700],
@@ -734,19 +793,30 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                 ),
                                 const SizedBox(width: 12),
                                 ElevatedButton.icon(
-                                  onPressed: _isLoading ? null : _pickAndImportFile,
+                                  onPressed: _isLoading
+                                      ? null
+                                      : _pickAndImportFile,
                                   icon: _isLoading
                                       ? const SizedBox(
                                           width: 16,
                                           height: 16,
-                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white,
+                                          ),
                                         )
-                                      : const Icon(Icons.file_open_outlined, size: 18),
+                                      : const Icon(
+                                          Icons.file_open_outlined,
+                                          size: 18,
+                                        ),
                                   label: const Text('Chọn file'),
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: deepBlue,
                                     foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -760,7 +830,9 @@ class _AddClassDialogState extends State<AddClassDialog> {
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(16),
                             side: BorderSide(
-                              color: _importedStudentCount != null && _importedStudentCount! > 0
+                              color:
+                                  _importedStudentCount != null &&
+                                      _importedStudentCount! > 0
                                   ? Colors.green.shade400
                                   : deepBlue.withValues(alpha: 0.3),
                               width: 1.5,
@@ -774,7 +846,10 @@ class _AddClassDialogState extends State<AddClassDialog> {
                               children: [
                                 const Text(
                                   'Đường dẫn Google Sheets / Web App URL:',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
                                 ),
                                 const SizedBox(height: 8),
                                 Row(
@@ -783,28 +858,48 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                       child: TextField(
                                         controller: _googleSheetsUrlController,
                                         decoration: InputDecoration(
-                                          hintText: 'https://docs.google.com/spreadsheets/d/... hoặc Apps Script URL',
-                                          prefixIcon: const Icon(Icons.link_rounded),
+                                          hintText:
+                                              'https://docs.google.com/spreadsheets/d/... hoặc Apps Script URL',
+                                          prefixIcon: const Icon(
+                                            Icons.link_rounded,
+                                          ),
                                           isDense: true,
-                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
                                     const SizedBox(width: 10),
                                     ElevatedButton.icon(
-                                      onPressed: _isLoading ? null : _importFromGoogleSheets,
+                                      onPressed: _isLoading
+                                          ? null
+                                          : _importFromGoogleSheets,
                                       icon: _isLoading
                                           ? const SizedBox(
                                               width: 16,
                                               height: 16,
-                                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
                                             )
-                                          : const Icon(Icons.cloud_download, size: 18),
+                                          : const Icon(
+                                              Icons.cloud_download,
+                                              size: 18,
+                                            ),
                                       label: const Text('Tải từ Sheet'),
                                       style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(0xFF0F9D58),
+                                        backgroundColor: const Color(
+                                          0xFF0F9D58,
+                                        ),
                                         foregroundColor: Colors.white,
-                                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 14,
+                                        ),
                                       ),
                                     ),
                                   ],
@@ -837,11 +932,17 @@ class _AddClassDialogState extends State<AddClassDialog> {
                     onPressed: () => Navigator.of(context).pop(),
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.grey[700],
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
+                      ),
                     ),
                     child: const Text(
                       'Hủy bỏ',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -852,12 +953,18 @@ class _AddClassDialogState extends State<AddClassDialog> {
                     icon: const Icon(Icons.check_rounded, size: 18),
                     label: const Text(
                       'Lưu lớp học',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     style: FilledButton.styleFrom(
                       backgroundColor: fptOrange,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),

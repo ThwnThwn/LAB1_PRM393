@@ -7,13 +7,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // State
   let currentUser = null;
   let html5QrScanner = null;
+  let activeRoster = new Map();
   let activeSession = {
     sessionId: '',
-    classCode: 'SE1801',
-    subjectCode: 'PRN231',
+    classCode: '',
+    subjectCode: '',
     slot: 1,
     otp: ''
   };
+  let sessionLoadPromise = Promise.resolve();
 
   // DOM Elements
   const authView = document.getElementById('auth-view');
@@ -51,8 +53,76 @@ document.addEventListener('DOMContentLoaded', () => {
   if (urlParams.get('subject')) activeSession.subjectCode = urlParams.get('subject');
   if (urlParams.get('slot')) activeSession.slot = parseInt(urlParams.get('slot'), 10) || 1;
 
-  // Update class display text
-  classInfoDisplay.textContent = `${activeSession.subjectCode} • Lớp ${activeSession.classCode} (Slot ${activeSession.slot})`;
+  updateClassDisplay('Đang tải phiên điểm danh...');
+  sessionLoadPromise = loadSessionDetails();
+
+  function updateClassDisplay(message = '') {
+    if (message) {
+      classInfoDisplay.textContent = message;
+      return;
+    }
+
+    classInfoDisplay.textContent = activeSession.sessionId
+      ? `${activeSession.subjectCode || '---'} • Lớp ${activeSession.classCode || '---'} (Slot ${activeSession.slot})`
+      : 'Chưa có phiên điểm danh đang mở';
+  }
+
+  function buildApiUrl(path) {
+    const base = configuredApiBase
+      ? configuredApiBase.replace(/\/$/, '')
+      : window.location.origin;
+    return `${base}${path}`;
+  }
+
+  async function loadSessionDetails() {
+    const requestedSessionId = activeSession.sessionId;
+    const path = requestedSessionId
+      ? `/api/sessions/${encodeURIComponent(requestedSessionId)}`
+      : '/api/attendance';
+
+    try {
+      const response = await fetch(buildApiUrl(path), { cache: 'no-store' });
+      const snapshot = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(snapshot.message || 'Không thể tải phiên điểm danh.');
+      }
+
+      if (!snapshot.sessionId || snapshot.isOpen !== true) {
+        if (!requestedSessionId) {
+          activeSession.sessionId = '';
+          activeSession.classCode = '';
+          activeSession.subjectCode = '';
+        }
+        updateClassDisplay(
+          requestedSessionId
+            ? 'Phiên trong mã QR đã đóng'
+            : 'Chưa có phiên điểm danh đang mở'
+        );
+        return false;
+      }
+
+      activeSession.sessionId = snapshot.sessionId;
+      activeSession.classCode = snapshot.classCode || activeSession.classCode;
+      activeSession.subjectCode = snapshot.subjectCode || activeSession.subjectCode;
+      activeSession.slot = Number(snapshot.slot) || activeSession.slot;
+      activeRoster = new Map(
+        (snapshot.students || []).map(student => [
+          String(student.rollNo || '').trim().toUpperCase(),
+          student
+        ])
+      );
+      updateClassDisplay();
+      return true;
+    } catch (error) {
+      console.error('Không thể đồng bộ phiên điểm danh:', error);
+      updateClassDisplay(
+        activeSession.sessionId
+          ? 'Không thể kiểm tra phiên điểm danh'
+          : 'Không thể kết nối máy chủ điểm danh'
+      );
+      return false;
+    }
+  }
 
   // 10s OTP Countdown Clock
   function updateOtpCountdown() {
@@ -78,8 +148,9 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  studentLoginForm.addEventListener('submit', (e) => {
+  studentLoginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
+    await sessionLoadPromise;
     const rollNo = inputRollNo.value.trim().toUpperCase();
     const email = inputEmail.value.trim().toLowerCase();
     loginWithStudent(rollNo, email);
@@ -96,7 +167,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const name = optionalName || (rollNo === 'SE182173' ? 'Bùi Nhật Minh' : rollNo);
+    const rosterStudent = activeRoster.get(rollNo);
+    const name = optionalName || rosterStudent?.fullName || rollNo;
 
     currentUser = {
       email: email,
@@ -189,7 +261,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function onScanSuccess(decodedText) {
+  async function onScanSuccess(decodedText) {
     console.log('[QR Scanned]:', decodedText);
     stopCameraScanner();
 
@@ -211,7 +283,9 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (e) {}
     }
 
-    classInfoDisplay.textContent = `${activeSession.subjectCode} • Lớp ${activeSession.classCode} (Slot ${activeSession.slot})`;
+    sessionLoadPromise = loadSessionDetails();
+    await sessionLoadPromise;
+    updateClassDisplay();
     activeSession.otp = '';
     inputOtp.value = '';
     switchTab('otp');
@@ -237,16 +311,19 @@ document.addEventListener('DOMContentLoaded', () => {
       alert('Vui lòng nhập thông tin sinh viên trước!');
       return;
     }
+    if (!activeSession.sessionId) {
+      alert('Không có phiên điểm danh đang mở. Vui lòng quét lại mã QR của giảng viên.');
+      return;
+    }
 
     btnSubmitOtp.disabled = true;
     btnSubmitOtp.innerHTML = '<span>Đang xác thực điểm danh...</span>';
 
     try {
-      const apiUrl = configuredApiBase
-        ? `${configuredApiBase.replace(/\/$/, '')}/api/attendance`
-        : `${window.location.origin}/api/attendance`;
+      const apiUrl = buildApiUrl('/api/attendance');
       const response = await fetch(apiUrl, {
         method: 'POST',
+        credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: currentUser.email,
@@ -262,9 +339,17 @@ document.addEventListener('DOMContentLoaded', () => {
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok || result.success !== true) {
+        if (result.code === 'DEVICE_ALREADY_USED') {
+          throw new Error(
+            `${result.message}\n\nGiảng viên có thể mở khóa thiết bị trên ứng dụng desktop nếu đây là trường hợp mượn điện thoại hợp lệ.`
+          );
+        }
         throw new Error(result.message || 'Không thể xác nhận điểm danh với máy chủ.');
       }
 
+      if (result.student?.fullName) {
+        currentUser.fullName = result.student.fullName;
+      }
       displaySuccessTicket(result.student);
     } catch (error) {
       alert(error.message || 'Không thể kết nối tới máy chủ điểm danh.');
@@ -283,7 +368,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')} ${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
     const hash = serverStudent?.confirmationCode || `FAP-${currentUser.rollNo}-${now.getTime().toString(16).toUpperCase().slice(-6)}`;
 
-    document.getElementById('ticket-student-name').textContent = currentUser.fullName;
+    document.getElementById('ticket-student-name').textContent = serverStudent?.fullName || currentUser.fullName;
     document.getElementById('ticket-student-roll').textContent = currentUser.rollNo;
     document.getElementById('ticket-student-email').textContent = currentUser.email;
     document.getElementById('ticket-class-info').textContent = `${activeSession.subjectCode} - Lớp ${activeSession.classCode}`;

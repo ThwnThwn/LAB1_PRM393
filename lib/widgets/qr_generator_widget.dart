@@ -1,34 +1,35 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/attendance_provider.dart';
+import '../services/student_portal_url_service.dart';
 
 class QrGeneratorWidget extends StatefulWidget {
   const QrGeneratorWidget({super.key});
-
-  static const String _configuredServerUrl = String.fromEnvironment(
-    'ATTENDANCE_SERVER_URL',
-    defaultValue: '',
-  );
-
-  static String get studentPortalUrl {
-    if (_configuredServerUrl.isNotEmpty) {
-      return '${_configuredServerUrl.replaceAll(RegExp(r'/$'), '')}/student/';
-    }
-
-    if (Uri.base.scheme == 'http' || Uri.base.scheme == 'https') {
-      return '${Uri.base.origin}/student/';
-    }
-
-    return 'http://localhost:8080/student/';
-  }
 
   @override
   State<QrGeneratorWidget> createState() => _QrGeneratorWidgetState();
 }
 
 class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
+  late String _studentPortalUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _studentPortalUrl = StudentPortalUrlService.fallbackUrl;
+    unawaited(_resolveStudentPortalUrl());
+  }
+
+  Future<void> _resolveStudentPortalUrl() async {
+    final resolvedUrl = await StudentPortalUrlService.resolve();
+    if (!mounted || resolvedUrl == _studentPortalUrl) return;
+    setState(() => _studentPortalUrl = resolvedUrl);
+  }
+
   Future<void> _togglePause(AttendanceProvider provider) async {
     final success = provider.isOtpPaused
         ? await provider.resumeOtpRotation()
@@ -56,11 +57,12 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
     final isPaused = provider.isOtpPaused;
     final liveOtp = session.activeOtp;
 
-    // Live QR Data
-    final liveQrData =
-        '${QrGeneratorWidget.studentPortalUrl}?subject=${session.subjectCode}&class=${session.classCode}&slot=${session.slot}&session=${provider.serverSessionId}&otp=$liveOtp';
-
-    final displayQrData = liveQrData;
+    // The QR identifies a session and stays stable while the OTP rotates.
+    // Session metadata is loaded from the server after the phone opens it.
+    final displayQrData = StudentPortalUrlService.buildSessionUrl(
+      _studentPortalUrl,
+      sessionId: provider.serverSessionId!,
+    );
     final displayOtp = liveOtp;
 
     return Container(
@@ -351,7 +353,7 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
                   ),
                   const SizedBox(height: 4),
                   SelectableText(
-                    QrGeneratorWidget.studentPortalUrl,
+                    _studentPortalUrl,
                     style: const TextStyle(
                       fontSize: 11,
                       fontFamily: 'monospace',
@@ -385,7 +387,8 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
                         Text(
                           '1. Bấm "Tạm dừng QR & OTP" để giữ nguyên mã và bộ đếm nếu cần\n'
                           '2. Sinh viên quét mã QR bằng camera điện thoại\n'
-                          '3. Nhập OTP hiện tại rồi xác nhận điểm danh',
+                          '3. Nhập OTP hiện tại rồi xác nhận điểm danh\n'
+                          'Không mở được web: kết nối điện thoại vào Mobile Hotspot của máy rồi mở lại app.',
                           style: TextStyle(
                             fontSize: 9.5,
                             color: Colors.blue.shade700,

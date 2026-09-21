@@ -3,11 +3,11 @@ import 'package:provider/provider.dart';
 import '../providers/attendance_provider.dart';
 import '../services/file_download_helper.dart';
 import '../widgets/audit_log_widget.dart';
+import '../widgets/device_security_panel.dart';
 import '../widgets/qr_generator_widget.dart';
 import '../widgets/roster_table_widget.dart';
 import '../widgets/sheets_config_widget.dart';
 import 'fap_timetable_screen.dart';
-import 'extension_guide_screen.dart';
 
 class TeacherDashboardScreen extends StatefulWidget {
   const TeacherDashboardScreen({super.key});
@@ -93,11 +93,14 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   }
 
   Widget _buildNotificationBanner(String notification) {
+    final isWarning = notification.startsWith('⚠️');
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [Colors.green.shade700, Colors.green.shade600],
+          colors: isWarning
+              ? [const Color(0xFFB45309), const Color(0xFFD97706)]
+              : [Colors.green.shade700, Colors.green.shade600],
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -109,8 +112,10 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
               color: Colors.white.withValues(alpha: 0.2),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: const Icon(
-              Icons.notifications_active_rounded,
+            child: Icon(
+              isWarning
+                  ? Icons.gpp_maybe_rounded
+                  : Icons.notifications_active_rounded,
               color: Colors.white,
               size: 16,
             ),
@@ -216,7 +221,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
               children: [
                 _buildNavItem(
                   0,
-                  'Lịch dạy FAP (Timetable)',
+                  'Thời khóa biểu tuần',
                   Icons.calendar_month_rounded,
                 ),
                 _buildNavItem(
@@ -234,12 +239,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                   'Cấu hình Google Sheets',
                   Icons.cloud_outlined,
                 ),
-                _buildNavItem(
-                  4,
-                  'Tiện ích FAP (Extension)',
-                  Icons.extension_rounded,
-                ),
-                _buildNavItem(5, 'Nhật ký chỉnh sửa', Icons.history_rounded),
+                _buildNavItem(4, 'Nhật ký chỉnh sửa', Icons.history_rounded),
               ],
             ),
           ),
@@ -725,6 +725,10 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                     ),
                     const SizedBox(height: 20),
 
+                    // Device-level anti proxy-attendance protection.
+                    const DeviceSecurityPanel(),
+                    const SizedBox(height: 12),
+
                     // Quick Roster Table
                     const Expanded(child: RosterTableWidget()),
                   ],
@@ -741,11 +745,9 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       case 3:
         return const SheetsConfigWidget();
       case 4:
-        return const ExtensionGuideScreen();
-      case 5:
         return const AuditLogWidget();
       default:
-        return const ExtensionGuideScreen();
+        return const FapTimetableScreen();
     }
   }
 

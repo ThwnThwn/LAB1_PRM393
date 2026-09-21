@@ -6,7 +6,7 @@ import '../dialogs/activity_detail_dialog.dart';
 import '../dialogs/add_class_dialog.dart';
 
 /// Modern Material 3 Weekly Timetable screen for FPT University Attendance Desktop App.
-/// Provides a desktop-first 7-column x 6-slot schedule grid with week navigation,
+/// Provides a desktop-first 7-column x 8-slot schedule grid with week navigation,
 /// subject tonal color theming, and quick access to class details and creation.
 class FapTimetableScreen extends StatelessWidget {
   const FapTimetableScreen({super.key});
@@ -38,7 +38,9 @@ class FapTimetableScreen extends StatelessWidget {
         children: [
           // Top Bar: Week navigation, labels, and Add Class action
           _buildTopBar(context, provider),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
+          _buildClassSelectionBar(context, provider),
+          const SizedBox(height: 12),
 
           // Timetable Grid Container
           Expanded(
@@ -50,7 +52,7 @@ class FapTimetableScreen extends StatelessWidget {
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 16,
+                    blurRadius: 8,
                     offset: const Offset(0, 4),
                   ),
                 ],
@@ -61,6 +63,111 @@ class FapTimetableScreen extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClassSelectionBar(
+    BuildContext context,
+    AttendanceProvider provider,
+  ) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final selected = provider.selectedSlot;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF8F3),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _fptOrange.withValues(alpha: 0.25)),
+      ),
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 10,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.filter_alt_outlined,
+                size: 20,
+                color: _fptOrange,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'Mã lớp điểm danh',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          Container(
+            height: 42,
+            constraints: const BoxConstraints(minWidth: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.8),
+              ),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                key: const ValueKey('class-code-filter'),
+                value: provider.classCodeFilter ?? '',
+                isExpanded: true,
+                icon: const Icon(Icons.expand_more_rounded),
+                items: [
+                  const DropdownMenuItem(value: '', child: Text('Tất cả lớp')),
+                  ...provider.availableClassCodes.map(
+                    (classCode) => DropdownMenuItem(
+                      value: classCode,
+                      child: Text(
+                        classCode,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ),
+                ],
+                onChanged: provider.isSessionOpen
+                    ? null
+                    : provider.setClassCodeFilter,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 300,
+            child: Text(
+              selected == null
+                  ? '1. Chọn mã lớp  •  2. Bấm ca học  •  3. Bắt đầu điểm danh'
+                  : '${selected.subjectCode} • ${selected.classCode} • Slot ${selected.slot} • ${FapClassSlot.getDayName(selected.dayOfWeek)}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: selected == null
+                    ? colorScheme.onSurfaceVariant
+                    : const Color(0xFF9A3412),
+                fontWeight: selected == null
+                    ? FontWeight.w500
+                    : FontWeight.w700,
+              ),
+            ),
+          ),
+          if (selected != null)
+            FilledButton.icon(
+              onPressed: () => provider.selectSlotAndStartAttendance(selected),
+              icon: const Icon(Icons.fact_check_outlined, size: 18),
+              label: const Text('Điểm danh lớp này'),
+              style: FilledButton.styleFrom(
+                backgroundColor: _fptOrange,
+                foregroundColor: Colors.white,
+              ),
+            ),
         ],
       ),
     );
@@ -191,6 +298,11 @@ class FapTimetableScreen extends StatelessWidget {
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: provider.goToCurrentWeek,
+                child: const Text('Tuần hiện tại'),
+              ),
             ],
           ),
 
@@ -250,8 +362,8 @@ class FapTimetableScreen extends StatelessWidget {
                   _buildHeaderRow(context, provider, slotColWidth, dayColWidth),
                   const SizedBox(height: 6),
 
-                  // Slot rows 1 to 6
-                  for (int slot = 1; slot <= 6; slot++) ...[
+                  // FAP standard: Slot 1 to 8
+                  for (int slot = 1; slot <= 8; slot++) ...[
                     _buildSlotRow(
                       context,
                       provider,
@@ -259,7 +371,7 @@ class FapTimetableScreen extends StatelessWidget {
                       slotColWidth,
                       dayColWidth,
                     ),
-                    if (slot < 6) const SizedBox(height: 6),
+                    if (slot < 8) const SizedBox(height: 6),
                   ],
                 ],
               ),
@@ -469,7 +581,7 @@ class FapTimetableScreen extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Container(
-                constraints: const BoxConstraints(minHeight: 115),
+                constraints: const BoxConstraints(minHeight: 98),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 8,
                   vertical: 10,
@@ -593,10 +705,6 @@ class FapTimetableScreen extends StatelessWidget {
       initialDate: today,
       firstDate: DateTime(2020),
       lastDate: DateTime(2030),
-      selectableDayPredicate: (date) {
-        // Disable (gray out) past dates — only today and future are selectable
-        return !date.isBefore(today);
-      },
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
@@ -687,7 +795,7 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOut,
           margin: const EdgeInsets.symmetric(vertical: 2.0),
-          constraints: const BoxConstraints(minHeight: 111),
+          constraints: const BoxConstraints(minHeight: 94),
           decoration: BoxDecoration(
             color: _isHovered
                 ? subjectColor.container
@@ -720,9 +828,6 @@ class _TimetableSlotCardState extends State<_TimetableSlotCard> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Left brand vertical accent bar
-                Container(width: 4.5, color: subjectColor.primary),
-
                 // Card Content Body
                 Expanded(
                   child: Padding(
@@ -879,7 +984,7 @@ class _EmptySlotCell extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 2.0),
-      constraints: const BoxConstraints(minHeight: 111),
+      constraints: const BoxConstraints(minHeight: 94),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(10),

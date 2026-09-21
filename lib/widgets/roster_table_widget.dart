@@ -27,12 +27,25 @@ class RosterTableWidget extends StatelessWidget {
         if (file.bytes != null) {
           content = utf8.decode(file.bytes!);
         }
-        if (content.isNotEmpty && context.mounted) {
-          provider.importCsvContent(content);
+        if (content.isEmpty) {
+          throw const FormatException('File CSV không có dữ liệu.');
+        }
+        if (context.mounted) {
+          final importResult = await provider.importCsvContent(content);
+          if (!context.mounted) return;
+          final warningParts = <String>[
+            if (importResult.skippedRows > 0)
+              '${importResult.skippedRows} dòng thiếu dữ liệu',
+            if (importResult.duplicateRows > 0)
+              '${importResult.duplicateRows} dòng trùng',
+          ];
+          final warning = warningParts.isEmpty
+              ? ''
+              : ' Bỏ qua ${warningParts.join(' và ')}.';
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
+            SnackBar(
               content: Text(
-                'Đã nạp danh sách sinh viên từ file CSV thành công!',
+                'Đã lưu ${importResult.importedCount} sinh viên vào database.$warning',
               ),
               backgroundColor: Colors.green,
             ),
@@ -41,9 +54,10 @@ class RosterTableWidget extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
+        final message = e is FormatException ? e.message : e.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Lỗi khi mở file CSV: $e'),
+            content: Text('Không thể import CSV: $message'),
             backgroundColor: Colors.red,
           ),
         );
@@ -58,6 +72,26 @@ class RosterTableWidget extends StatelessWidget {
 
     return Column(
       children: [
+        if (provider.serverSessionId == null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.info_outline,
+                  size: 17,
+                  color: Color(0xFF475569),
+                ),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Mở phiên điểm danh để chỉnh trạng thái và đồng bộ với cổng FAP mô phỏng.',
+                    style: TextStyle(color: Color(0xFF334155), fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
         // Controls Row — Modern Search & Filters
         Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -358,40 +392,12 @@ class RosterTableWidget extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          // Name + Group
+          // Full name
           Expanded(
-            child: Row(
-              children: [
-                Flexible(
-                  child: Text(
-                    student.fullName,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    student.group,
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                ),
-              ],
+            child: Text(
+              student.fullName,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
           // Email
@@ -485,11 +491,15 @@ class RosterTableWidget extends StatelessWidget {
                     ),
                   );
                 }).toList(),
-                onChanged: (newStatus) {
-                  if (newStatus != null) {
-                    provider.toggleStudentStatus(student, newStatus);
-                  }
-                },
+                onChanged:
+                    provider.serverSessionId == null ||
+                        provider.isStatusUpdatePending(student.rollNo)
+                    ? null
+                    : (newStatus) {
+                        if (newStatus != null) {
+                          provider.toggleStudentStatus(student, newStatus);
+                        }
+                      },
               ),
             ),
           ),

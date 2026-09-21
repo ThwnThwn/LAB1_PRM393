@@ -4,14 +4,31 @@ import 'package:http/http.dart' as http;
 
 import '../models/attendance_session.dart';
 import '../models/student.dart';
+import 'runtime_environment.dart';
 
 class AttendanceApiService {
   static const String _configuredServerUrl = String.fromEnvironment(
     'ATTENDANCE_SERVER_URL',
     defaultValue: '',
   );
+  static const String _configuredTeacherToken = String.fromEnvironment(
+    'ATTENDANCE_TEACHER_TOKEN',
+    defaultValue: '',
+  );
+
+  String get _runtimeServerUrl =>
+      readRuntimeEnvironment('ATTENDANCE_SERVER_URL');
+
+  String get _teacherToken {
+    final runtimeToken = readRuntimeEnvironment('ATTENDANCE_TEACHER_TOKEN');
+    return runtimeToken.isNotEmpty ? runtimeToken : _configuredTeacherToken;
+  }
 
   String get baseUrl {
+    if (_runtimeServerUrl.isNotEmpty) {
+      return _runtimeServerUrl.replaceAll(RegExp(r'/$'), '');
+    }
+
     if (_configuredServerUrl.isNotEmpty) {
       return _configuredServerUrl.replaceAll(RegExp(r'/$'), '');
     }
@@ -23,8 +40,44 @@ class AttendanceApiService {
     return 'http://localhost:8080';
   }
 
-  String exportUrl(String sessionId) =>
-      '$baseUrl/api/sessions/${Uri.encodeComponent(sessionId)}/export.csv';
+  String exportUrl(String sessionId) {
+    final uri = Uri.parse(
+      '$baseUrl/api/sessions/${Uri.encodeComponent(sessionId)}/export.csv',
+    );
+    if (_teacherToken.isEmpty) return uri.toString();
+    return uri
+        .replace(
+          queryParameters: {
+            ...uri.queryParameters,
+            'teacherToken': _teacherToken,
+          },
+        )
+        .toString();
+  }
+
+  Future<Map<String, dynamic>> getGoogleSheetsConfiguration({
+    bool verify = false,
+  }) {
+    return _sendJson('GET', '/api/config/google-sheets?verify=$verify', null);
+  }
+
+  Future<Map<String, dynamic>> configureGoogleSheets(String webAppUrl) {
+    return _sendJson('PUT', '/api/config/google-sheets', {
+      'webAppUrl': webAppUrl,
+    });
+  }
+
+  Future<Map<String, dynamic>> syncSessionToGoogleSheets(String sessionId) {
+    return _sendJson(
+      'POST',
+      '/api/google-sheets/sync/${Uri.encodeComponent(sessionId)}',
+      null,
+    );
+  }
+
+  Future<Map<String, dynamic>> seedGoogleSheetsDemo() {
+    return _sendJson('POST', '/api/google-sheets/seed-demo', null);
+  }
 
   Future<Map<String, dynamic>> openSession(
     AttendanceSession session,
@@ -81,16 +134,56 @@ class AttendanceApiService {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getClassRoster(String classCode) async {
+    final payload = await _sendJson(
+      'GET',
+      '/api/rosters/${Uri.encodeComponent(classCode)}',
+      null,
+    );
+    final students = payload['students'];
+    if (students is! List) return [];
+    return students
+        .whereType<Map>()
+        .map((student) => Map<String, dynamic>.from(student))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> syncClassRoster(
+    String classCode,
+    List<Student> students, {
+    String? sessionId,
+  }) async {
+    return _sendJson('PUT', '/api/rosters/${Uri.encodeComponent(classCode)}', {
+      'sessionId': sessionId,
+      'actor': 'Giảng viên',
+      'students': students
+          .map(
+            (student) => {
+              'rollNo': student.rollNo,
+              'fullName': student.fullName,
+              'email': student.email,
+            },
+          )
+          .toList(),
+    });
+  }
+
   Future<Map<String, dynamic>> updateAttendance(
     String sessionId,
     String rollNo,
     AttendanceStatus status, {
     String reason = 'Giảng viên cập nhật từ dashboard',
+    AttendanceStatus? expectedStatus,
   }) async {
     return _sendJson(
       'PATCH',
       '/api/sessions/${Uri.encodeComponent(sessionId)}/attendance/${Uri.encodeComponent(rollNo)}',
-      {'status': status.toLabel(), 'actor': 'Giảng viên', 'reason': reason},
+      {
+        'status': status.toLabel(),
+        'actor': 'Giảng viên',
+        'reason': reason,
+        if (expectedStatus != null) 'expectedStatus': expectedStatus.toLabel(),
+      },
     );
   }
 
@@ -108,6 +201,18 @@ class AttendanceApiService {
         .toList();
   }
 
+  Future<Map<String, dynamic>> releaseDeviceBinding(
+    String sessionId,
+    int bindingId,
+    String reason,
+  ) async {
+    return _sendJson(
+      'POST',
+      '/api/sessions/${Uri.encodeComponent(sessionId)}/devices/$bindingId/release',
+      {'actor': 'Giảng viên', 'reason': reason},
+    );
+  }
+
   Future<Map<String, dynamic>> _sendJson(
     String method,
     String path,
@@ -115,7 +220,10 @@ class AttendanceApiService {
   ) async {
     final uri = Uri.parse('$baseUrl$path');
     late http.Response response;
-    final headers = {'Content-Type': 'application/json'};
+    final headers = {
+      'Content-Type': 'application/json',
+      if (_teacherToken.isNotEmpty) 'X-Attendance-Teacher-Token': _teacherToken,
+    };
 
     switch (method) {
       case 'POST':
@@ -127,6 +235,13 @@ class AttendanceApiService {
         break;
       case 'PATCH':
         response = await http.patch(
+          uri,
+          headers: headers,
+          body: jsonEncode(body),
+        );
+        break;
+      case 'PUT':
+        response = await http.put(
           uri,
           headers: headers,
           body: jsonEncode(body),

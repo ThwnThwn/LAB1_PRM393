@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1b2a4a">
+  <title>Cổng FAP mô phỏng | Lab 1</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand" aria-label="Cổng FAP mô phỏng của Lab 1">
+        <span class="fpt-mark" aria-hidden="true">FPT</span>
+        <span class="brand-copy">
+          <strong>CỔNG FAP MÔ PHỎNG</strong>
+          <small>Website độc lập phục vụ demo Lab 1</small>
+        </span>
+      </div>
+      <div class="header-meta">
+        <span class="demo-badge">DEMO</span>
+        <span class="sync-state" id="sync-state" data-state="loading">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span id="sync-label">Đang kết nối...</span>
+        </span>
+      </div>
+    </div>
+  </header>
+
+  <main id="main-content" class="page-shell">
+    <section class="session-panel" aria-labelledby="page-title">
+      <div class="session-heading">
+        <div>
+          <p class="eyebrow">LAB 1 · CỔNG GIẢ LẬP</p>
+          <h1 id="page-title">Danh sách điểm danh</h1>
+          <p id="session-description" class="session-description">Đang tải ca học gần nhất...</p>
+        </div>
+        <div class="session-actions">
+          <button class="button button-secondary" id="refresh-button" type="button">
+            <span aria-hidden="true">↻</span>
+            Nạp lại
+          </button>
+          <button class="button button-primary" id="save-button" type="button" disabled>
+            Lưu điểm danh
+            <span class="change-count" id="change-count" hidden>0</span>
+          </button>
+        </div>
+      </div>
+
+      <dl class="session-details" aria-label="Thông tin ca học">
+        <div>
+          <dt>Môn học</dt>
+          <dd id="subject-code">—</dd>
+        </div>
+        <div>
+          <dt>Lớp</dt>
+          <dd id="class-code">—</dd>
+        </div>
+        <div>
+          <dt>Slot</dt>
+          <dd id="slot-number">—</dd>
+        </div>
+        <div>
+          <dt>Ngày học</dt>
+          <dd id="session-date">—</dd>
+        </div>
+        <div>
+          <dt>Trạng thái</dt>
+          <dd><span class="status-chip neutral" id="session-status">Đang tải</span></dd>
+        </div>
+      </dl>
+    </section>
+
+    <div class="system-message" id="system-message" role="status" hidden></div>
+
+    <section class="stats-strip" aria-label="Thống kê điểm danh">
+      <div class="stat-item">
+        <span class="stat-label">Sĩ số</span>
+        <strong id="stat-total">0</strong>
+      </div>
+      <div class="stat-item present">
+        <span class="stat-label">Có mặt</span>
+        <strong id="stat-present">0</strong>
+      </div>
+      <div class="stat-item late">
+        <span class="stat-label">Đi trễ</span>
+        <strong id="stat-late">0</strong>
+      </div>
+      <div class="stat-item absent">
+        <span class="stat-label">Vắng</span>
+        <strong id="stat-absent">0</strong>
+      </div>
+      <div class="stat-item pending">
+        <span class="stat-label">Chưa điểm danh</span>
+        <strong id="stat-pending">0</strong>
+      </div>
+    </section>
+
+    <section class="roster-panel" aria-labelledby="roster-title">
+      <div class="table-toolbar">
+        <div>
+          <h2 id="roster-title">Sinh viên trong lớp</h2>
+          <p id="last-updated">Tự động cập nhật mỗi 2 giây</p>
+        </div>
+        <div class="toolbar-controls">
+          <label class="search-box" for="student-search">
+            <span aria-hidden="true">⌕</span>
+            <span class="sr-only">Tìm sinh viên</span>
+            <input id="student-search" type="search" autocomplete="off" placeholder="Tìm MSSV, họ tên hoặc email">
+          </label>
+          <label class="filter-box" for="status-filter">
+            <span class="sr-only">Lọc theo trạng thái</span>
+            <select id="status-filter">
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="PRESENT">Có mặt</option>
+              <option value="LATE">Đi trễ</option>
+              <option value="ABSENT">Vắng</option>
+              <option value="NOT CHECKED">Chưa điểm danh</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="table-scroll" tabindex="0" aria-label="Bảng điểm danh, có thể cuộn ngang trên màn hình nhỏ">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col" class="index-column">STT</th>
+              <th scope="col" class="photo-column">Ảnh</th>
+              <th scope="col">MSSV</th>
+              <th scope="col">Họ và tên</th>
+              <th scope="col">Email</th>
+              <th scope="col" class="mark-column">Present</th>
+              <th scope="col" class="mark-column">Absent</th>
+              <th scope="col">Check-in</th>
+              <th scope="col">Trạng thái</th>
+            </tr>
+          </thead>
+          <tbody id="student-rows" aria-live="polite">
+            <tr class="loading-row"><td colspan="9">Đang tải danh sách sinh viên...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>Lab 1 · Website mô phỏng, không kết nối FAP chính thức</span>
+    <span>Dữ liệu chính: Google Sheets</span>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="./app.js" defer></script>
+</body>
+</html>

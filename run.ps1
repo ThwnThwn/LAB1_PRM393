@@ -19,6 +19,8 @@ if ([string]::IsNullOrWhiteSpace($lanAddress)) {
 }
 
 $publicServerUrl = "http://${lanAddress}:8080"
+$studentPortalUrl = "$publicServerUrl/student/"
+$fapDemoUrl = "$publicServerUrl/fap-demo/"
 
 function Test-BackendReady {
     try {
@@ -75,11 +77,18 @@ try {
         Write-Host 'Backend C# da san sang tai http://localhost:8080' -ForegroundColor Green
     }
 
-    Write-Host "Cong sinh vien trong QR: $publicServerUrl/student/" -ForegroundColor Green
-    Write-Host 'Dang mo Flutter Web tai http://localhost:3000...' -ForegroundColor Cyan
+    Write-Host "Cong sinh vien trong QR: $studentPortalUrl" -ForegroundColor Green
+    Write-Host "Cong FAP mo phong: $fapDemoUrl" -ForegroundColor Green
+    Write-Host 'Dang mo cong FAP mo phong tren trinh duyet...' -ForegroundColor Cyan
+    try {
+        Start-Process -FilePath $fapDemoUrl | Out-Null
+    }
+    catch {
+        Write-Warning "Khong tu mo duoc trinh duyet. Hay mo thu cong: $fapDemoUrl"
+    }
+    Write-Host 'Dang mo ung dung Flutter Windows cho giang vien...' -ForegroundColor Cyan
     & flutter run `
-        -d chrome `
-        --web-port=3000 `
+        -d windows `
         --dart-define="ATTENDANCE_SERVER_URL=$publicServerUrl"
 }
 finally {

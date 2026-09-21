@@ -18,6 +18,22 @@ public sealed class AttendanceSessionEntity
     public List<AttendanceEntryEntity> AttendanceEntries { get; set; } = [];
 }
 
+public sealed class AttendanceDeviceBindingEntity
+{
+    public long Id { get; set; }
+    public string SessionId { get; set; } = string.Empty;
+    public AttendanceSessionEntity? Session { get; set; }
+    public string DeviceHash { get; set; } = string.Empty;
+    public string RollNo { get; set; } = string.Empty;
+    public DateTime FirstSeenUtc { get; set; }
+    public DateTime LastSeenUtc { get; set; }
+    public int BlockedAttempts { get; set; }
+    public string LastBlockedRollNo { get; set; } = string.Empty;
+    public DateTime? LastBlockedAtUtc { get; set; }
+    public string NetworkHash { get; set; } = string.Empty;
+    public string UserAgentHash { get; set; } = string.Empty;
+}
+
 public sealed class AttendanceEntryEntity
 {
     public long Id { get; set; }
@@ -31,6 +47,16 @@ public sealed class AttendanceEntryEntity
     public DateTime UpdatedAtUtc { get; set; }
     public string Notes { get; set; } = string.Empty;
     public string ConfirmationCode { get; set; } = string.Empty;
+}
+
+public sealed class ClassRosterStudentEntity
+{
+    public long Id { get; set; }
+    public string ClassCode { get; set; } = string.Empty;
+    public string RollNo { get; set; } = string.Empty;
+    public string FullName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+    public DateTime UpdatedAtUtc { get; set; }
 }
 
 public sealed class AuditLogEntity
@@ -59,6 +85,23 @@ public static class AttendanceStatuses
 
 public sealed record StudentSeed(string? RollNo, string? FullName, string? Email);
 
+public sealed record RosterSyncRequest(
+    string? SessionId,
+    string? Actor,
+    IReadOnlyCollection<StudentSeed>? Students);
+
+public sealed record RosterStudentRecord(
+    string RollNo,
+    string FullName,
+    string Email);
+
+public sealed record RosterSyncSnapshot(
+    string Status,
+    string ClassCode,
+    int Count,
+    IReadOnlyCollection<RosterStudentRecord> Students,
+    AttendanceSnapshot? Session);
+
 public sealed record OpenSessionRequest(
     string? ClassCode,
     string? SubjectCode,
@@ -78,7 +121,31 @@ public sealed record StudentCheckinRequest(
     int Slot,
     string? Otp);
 
-public sealed record UpdateAttendanceRequest(string? Status, string? Actor, string? Reason);
+public sealed record UpdateAttendanceRequest(
+    string? Status,
+    string? Actor,
+    string? Reason,
+    string? ExpectedStatus = null);
+
+public sealed record ReleaseDeviceRequest(string? Actor, string? Reason);
+
+public sealed record GoogleSheetsConfigurationRequest(string? WebAppUrl);
+
+public sealed record DeviceIdentity(
+    string DeviceHash,
+    string DeviceCode,
+    string NetworkHash,
+    string UserAgentHash);
+
+public sealed record DeviceBindingRecord(
+    long Id,
+    string DeviceCode,
+    string RollNo,
+    DateTime FirstSeen,
+    DateTime LastSeen,
+    int BlockedAttempts,
+    string LastBlockedRollNo,
+    DateTime? LastBlockedAt);
 
 public sealed record AttendanceRecord(
     string SessionId,
@@ -117,7 +184,8 @@ public sealed record AttendanceSnapshot(
     int? OtpRemainingSeconds,
     int Count,
     DashboardStats Stats,
-    IReadOnlyCollection<AttendanceRecord> Students);
+    IReadOnlyCollection<AttendanceRecord> Students,
+    IReadOnlyCollection<DeviceBindingRecord> DeviceBindings);
 
 public sealed record AuditLogRecord(
     long Id,
@@ -134,4 +202,5 @@ public sealed record ServiceResult<T>(
     bool Success,
     string Message,
     T? Value,
-    int StatusCode = StatusCodes.Status200OK);
+    int StatusCode = StatusCodes.Status200OK,
+    string? Code = null);

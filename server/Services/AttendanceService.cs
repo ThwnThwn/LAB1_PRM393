@@ -14,6 +14,159 @@ public sealed class AttendanceService(
     OtpService otpService,
     IHubContext<AttendanceHub> hubContext)
 {
+    public async Task<IReadOnlyCollection<RosterStudentRecord>> GetClassRosterAsync(
+        string classCode,
+        CancellationToken cancellationToken)
+    {
+        var normalizedClassCode = classCode.Trim().ToUpperInvariant();
+        if (normalizedClassCode.Length == 0)
+        {
+            return [];
+        }
+
+        return await dbContext.ClassRosterStudents.AsNoTracking()
+            .Where(student => student.ClassCode == normalizedClassCode)
+            .OrderBy(student => student.RollNo)
+            .Select(student => new RosterStudentRecord(
+                student.RollNo,
+                student.FullName,
+                student.Email))
+            .ToArrayAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyDictionary<string, IReadOnlyCollection<RosterStudentRecord>>>
+        GetAllClassRostersAsync(CancellationToken cancellationToken)
+    {
+        var students = await dbContext.ClassRosterStudents.AsNoTracking()
+            .OrderBy(student => student.ClassCode)
+            .ThenBy(student => student.RollNo)
+            .ToListAsync(cancellationToken);
+        return students
+            .GroupBy(student => student.ClassCode)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyCollection<RosterStudentRecord>)group
+                    .Select(student => new RosterStudentRecord(
+                        student.RollNo,
+                        student.FullName,
+                        student.Email))
+                    .ToArray());
+    }
+
+    public async Task<ServiceResult<RosterSyncSnapshot>> SyncRosterAsync(
+        string classCode,
+        RosterSyncRequest request,
+        CancellationToken cancellationToken)
+    {
+        var normalizedClassCode = classCode.Trim().ToUpperInvariant();
+        if (normalizedClassCode.Length == 0)
+        {
+            return Failure<RosterSyncSnapshot>("Mã lớp không hợp lệ.");
+        }
+
+        var students = NormalizeStudents(request.Students);
+        if (students.Length == 0)
+        {
+            return Failure<RosterSyncSnapshot>("Danh sách sinh viên đang trống.");
+        }
+
+        AttendanceSessionEntity? session = null;
+        if (!string.IsNullOrWhiteSpace(request.SessionId))
+        {
+            session = await dbContext.Sessions
+                .Include(item => item.AttendanceEntries)
+                .FirstOrDefaultAsync(item => item.Id == request.SessionId, cancellationToken);
+            if (session is null)
+            {
+                return Failure<RosterSyncSnapshot>(
+                    "Không tìm thấy phiên điểm danh.",
+                    StatusCodes.Status404NotFound);
+            }
+            if (!session.IsOpen)
+            {
+                return Failure<RosterSyncSnapshot>(
+                    "Phiên điểm danh đã đóng.",
+                    StatusCodes.Status409Conflict);
+            }
+            if (!session.ClassCode.Equals(normalizedClassCode, StringComparison.OrdinalIgnoreCase))
+            {
+                return Failure<RosterSyncSnapshot>("Danh sách CSV không thuộc lớp của phiên đang mở.");
+            }
+        }
+
+        await ReplaceClassRosterAsync(normalizedClassCode, students, cancellationToken);
+
+        if (session is not null)
+        {
+            var incomingRollNumbers = students
+                .Select(student => student.RollNo!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var existingEntries = session.AttendanceEntries
+                .ToDictionary(entry => entry.RollNo, StringComparer.OrdinalIgnoreCase);
+            var now = DateTime.UtcNow;
+
+            foreach (var student in students)
+            {
+                var rollNo = student.RollNo!;
+                if (existingEntries.TryGetValue(rollNo, out var existingEntry))
+                {
+                    existingEntry.FullName = student.FullName!;
+                    existingEntry.Email = student.Email!;
+                    existingEntry.UpdatedAtUtc = now;
+                }
+                else
+                {
+                    session.AttendanceEntries.Add(new AttendanceEntryEntity
+                    {
+                        RollNo = rollNo,
+                        FullName = student.FullName!,
+                        Email = student.Email!,
+                        Status = AttendanceStatuses.NotChecked,
+                        UpdatedAtUtc = now,
+                    });
+                }
+            }
+
+            var removableEntries = session.AttendanceEntries
+                .Where(entry =>
+                    !incomingRollNumbers.Contains(entry.RollNo) &&
+                    !entry.CheckinTimeUtc.HasValue)
+                .ToArray();
+            dbContext.AttendanceEntries.RemoveRange(removableEntries);
+
+            dbContext.AuditLogs.Add(CreateAudit(
+                session.Id,
+                string.Empty,
+                "ROSTER_SYNCED",
+                existingEntries.Count.ToString(CultureInfo.InvariantCulture),
+                students.Length.ToString(CultureInfo.InvariantCulture),
+                CleanActor(request.Actor),
+                $"Đồng bộ {students.Length} sinh viên từ CSV"));
+        }
+
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var roster = await GetClassRosterAsync(normalizedClassCode, cancellationToken);
+        var sessionSnapshot = session is null
+            ? null
+            : await GetSnapshotAsync(session.Id, cancellationToken);
+        if (sessionSnapshot is not null)
+        {
+            await BroadcastAsync(session!.Id, "RosterUpdated", sessionSnapshot, cancellationToken);
+        }
+
+        var snapshot = new RosterSyncSnapshot(
+            "success",
+            normalizedClassCode,
+            roster.Count,
+            roster,
+            sessionSnapshot);
+        return new ServiceResult<RosterSyncSnapshot>(
+            true,
+            $"Đã lưu {roster.Count} sinh viên vào database.",
+            snapshot);
+    }
+
     public async Task<ServiceResult<AttendanceSnapshot>> OpenSessionAsync(
         OpenSessionRequest request,
         CancellationToken cancellationToken)
@@ -56,9 +209,8 @@ public sealed class AttendanceService(
             CreatedBy = CleanActor(request.Actor),
         };
 
-        var students = (request.Students ?? [])
-            .Where(student => !string.IsNullOrWhiteSpace(student.RollNo))
-            .DistinctBy(student => student.RollNo!.Trim(), StringComparer.OrdinalIgnoreCase);
+        var students = NormalizeStudents(request.Students);
+        await ReplaceClassRosterAsync(classCode, students, cancellationToken);
 
         foreach (var student in students)
         {
@@ -146,6 +298,7 @@ public sealed class AttendanceService(
 
     public async Task<ServiceResult<AttendanceSnapshot>> CheckinAsync(
         StudentCheckinRequest request,
+        DeviceIdentity deviceIdentity,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.SessionId))
@@ -172,14 +325,103 @@ public sealed class AttendanceService(
 
         var rollNo = request.RollNo!.Trim().ToUpperInvariant();
         var email = request.Email!.Trim().ToLowerInvariant();
+        var rosterStudent = await dbContext.ClassRosterStudents
+            .AsNoTracking()
+            .FirstOrDefaultAsync(
+                item => item.ClassCode == session.ClassCode && item.RollNo == rollNo,
+                cancellationToken);
         var entry = await dbContext.AttendanceEntries
             .AsNoTracking()
             .FirstOrDefaultAsync(
                 item => item.SessionId == session.Id && item.RollNo == rollNo,
                 cancellationToken);
 
+        if (entry is null && rosterStudent is null)
+        {
+            return Failure<AttendanceSnapshot>(
+                "MSSV không có trong danh sách lớp của phiên điểm danh.",
+                StatusCodes.Status404NotFound,
+                "STUDENT_NOT_IN_ROSTER");
+        }
+
+        if (rosterStudent is not null &&
+            !string.IsNullOrWhiteSpace(rosterStudent.Email) &&
+            !rosterStudent.Email.Equals(email, StringComparison.OrdinalIgnoreCase))
+        {
+            return Failure<AttendanceSnapshot>(
+                "Email không khớp với MSSV trong danh sách lớp.",
+                StatusCodes.Status403Forbidden,
+                "STUDENT_EMAIL_MISMATCH");
+        }
+
+        var now = DateTime.UtcNow;
+        var deviceBinding = await dbContext.AttendanceDeviceBindings
+            .FirstOrDefaultAsync(
+                item => item.SessionId == session.Id &&
+                        item.DeviceHash == deviceIdentity.DeviceHash,
+                cancellationToken);
+        // A cleared cookie or private browser window still originates from the
+        // same phone address on the lecturer's local hotspot/LAN. Use that as a
+        // secondary signal while keeping the signed cookie as the primary key.
+        deviceBinding ??= await dbContext.AttendanceDeviceBindings
+            .FirstOrDefaultAsync(
+                item => item.SessionId == session.Id &&
+                        item.NetworkHash == deviceIdentity.NetworkHash,
+                cancellationToken);
+
+        if (deviceBinding is not null &&
+            !deviceBinding.RollNo.Equals(rollNo, StringComparison.OrdinalIgnoreCase))
+        {
+            deviceBinding.LastSeenUtc = now;
+            deviceBinding.BlockedAttempts += 1;
+            deviceBinding.LastBlockedRollNo = rollNo;
+            deviceBinding.LastBlockedAtUtc = now;
+            deviceBinding.NetworkHash = deviceIdentity.NetworkHash;
+            deviceBinding.UserAgentHash = deviceIdentity.UserAgentHash;
+            dbContext.AuditLogs.Add(CreateAudit(
+                session.Id,
+                rollNo,
+                "DEVICE_CHECKIN_BLOCKED",
+                deviceBinding.RollNo,
+                rollNo,
+                $"Thiết bị {deviceIdentity.DeviceCode}",
+                $"Thiết bị đã được gắn với {deviceBinding.RollNo}"));
+            await dbContext.SaveChangesAsync(cancellationToken);
+
+            var blockedSnapshot = await GetSnapshotAsync(session.Id, cancellationToken);
+            await BroadcastAsync(session.Id, "DeviceConflict", blockedSnapshot, cancellationToken);
+            return new ServiceResult<AttendanceSnapshot>(
+                false,
+                "Thiết bị này đã được dùng cho một MSSV khác trong phiên. Hãy liên hệ giảng viên để mở khóa.",
+                blockedSnapshot,
+                StatusCodes.Status409Conflict,
+                "DEVICE_ALREADY_USED");
+        }
+
+        if (deviceBinding is null)
+        {
+            deviceBinding = new AttendanceDeviceBindingEntity
+            {
+                SessionId = session.Id,
+                DeviceHash = deviceIdentity.DeviceHash,
+                RollNo = rollNo,
+                FirstSeenUtc = now,
+                LastSeenUtc = now,
+                NetworkHash = deviceIdentity.NetworkHash,
+                UserAgentHash = deviceIdentity.UserAgentHash,
+            };
+            dbContext.AttendanceDeviceBindings.Add(deviceBinding);
+        }
+        else
+        {
+            deviceBinding.LastSeenUtc = now;
+            deviceBinding.NetworkHash = deviceIdentity.NetworkHash;
+            deviceBinding.UserAgentHash = deviceIdentity.UserAgentHash;
+        }
+
         if (entry is not null && entry.CheckinTimeUtc.HasValue)
         {
+            await dbContext.SaveChangesAsync(cancellationToken);
             var duplicateSnapshot = await GetSnapshotAsync(session.Id, cancellationToken);
             return new ServiceResult<AttendanceSnapshot>(
                 false,
@@ -188,7 +430,6 @@ public sealed class AttendanceService(
                 StatusCodes.Status409Conflict);
         }
 
-        var now = DateTime.UtcNow;
         var status = now > session.OpenedAtUtc.AddMinutes(session.LateAfterMinutes)
             ? AttendanceStatuses.Late
             : AttendanceStatuses.Present;
@@ -197,20 +438,26 @@ public sealed class AttendanceService(
 
         if (entry is null)
         {
+            var submittedName = request.FullName?.Trim();
+            var fullName = rosterStudent?.FullName
+                ?? (!string.IsNullOrWhiteSpace(submittedName) &&
+                    !submittedName.Equals(rollNo, StringComparison.OrdinalIgnoreCase)
+                        ? submittedName
+                        : rollNo);
             entry = new AttendanceEntryEntity
             {
                 SessionId = session.Id,
                 RollNo = rollNo,
-                FullName = string.IsNullOrWhiteSpace(request.FullName) ? rollNo : request.FullName.Trim(),
+                FullName = fullName,
                 Email = email,
             };
             dbContext.AttendanceEntries.Add(entry);
         }
         else
         {
-            var fullName = string.IsNullOrWhiteSpace(request.FullName)
-                ? entry.FullName
-                : request.FullName.Trim();
+            // The imported roster is authoritative. Never let a student-submitted
+            // value (often just the MSSV) overwrite the saved full name.
+            var fullName = rosterStudent?.FullName ?? entry.FullName;
             var affected = await dbContext.AttendanceEntries
                 .Where(item => item.Id == entry.Id && item.CheckinTimeUtc == null)
                 .ExecuteUpdateAsync(
@@ -268,6 +515,48 @@ public sealed class AttendanceService(
         return new ServiceResult<AttendanceSnapshot>(true, "Điểm danh thành công.", snapshot);
     }
 
+    public async Task<ServiceResult<AttendanceSnapshot>> ReleaseDeviceBindingAsync(
+        string sessionId,
+        long bindingId,
+        ReleaseDeviceRequest request,
+        CancellationToken cancellationToken)
+    {
+        var reason = request.Reason?.Trim() ?? string.Empty;
+        if (reason.Length < 3)
+        {
+            return Failure<AttendanceSnapshot>("Vui lòng nhập lý do mở khóa thiết bị.");
+        }
+
+        var binding = await dbContext.AttendanceDeviceBindings
+            .FirstOrDefaultAsync(
+                item => item.Id == bindingId && item.SessionId == sessionId,
+                cancellationToken);
+        if (binding is null)
+        {
+            return Failure<AttendanceSnapshot>(
+                "Không tìm thấy thiết bị cần mở khóa.",
+                StatusCodes.Status404NotFound);
+        }
+
+        dbContext.AuditLogs.Add(CreateAudit(
+            sessionId,
+            binding.RollNo,
+            "DEVICE_BINDING_RELEASED",
+            binding.RollNo,
+            string.Empty,
+            CleanActor(request.Actor),
+            $"{reason} • Thiết bị {binding.DeviceHash[..8]}"));
+        dbContext.AttendanceDeviceBindings.Remove(binding);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        var snapshot = await GetSnapshotAsync(sessionId, cancellationToken);
+        await BroadcastAsync(sessionId, "DeviceBindingReleased", snapshot, cancellationToken);
+        return new ServiceResult<AttendanceSnapshot>(
+            true,
+            "Đã mở khóa thiết bị. Thiết bị có thể điểm danh lại cho một MSSV khác.",
+            snapshot);
+    }
+
     public async Task<ServiceResult<AttendanceSnapshot>> UpdateAttendanceAsync(
         string sessionId,
         string rollNo,
@@ -290,13 +579,44 @@ public sealed class AttendanceService(
             return Failure<AttendanceSnapshot>("Không tìm thấy sinh viên trong phiên.", StatusCodes.Status404NotFound);
         }
 
+        var expectedStatus = request.ExpectedStatus?.Trim().ToUpperInvariant();
+        if (!string.IsNullOrEmpty(expectedStatus) &&
+            !entry.Status.Equals(expectedStatus, StringComparison.OrdinalIgnoreCase))
+        {
+            return Failure<AttendanceSnapshot>(
+                "Trạng thái đã được thay đổi ở cửa sổ khác. Hãy nạp lại dữ liệu trước khi lưu.",
+                StatusCodes.Status409Conflict);
+        }
+
         var previousStatus = entry.Status;
-        entry.Status = normalizedStatus;
-        entry.CheckinTimeUtc = normalizedStatus is AttendanceStatuses.Present or AttendanceStatuses.Late
+        DateTime? checkinTime = normalizedStatus is AttendanceStatuses.Present or AttendanceStatuses.Late
             ? entry.CheckinTimeUtc ?? DateTime.UtcNow
             : null;
-        entry.UpdatedAtUtc = DateTime.UtcNow;
-        entry.Notes = request.Reason?.Trim() ?? "Giảng viên cập nhật thủ công";
+        var updatedAt = DateTime.UtcNow;
+        var notes = request.Reason?.Trim() ?? "Giảng viên cập nhật thủ công";
+
+        // Compare-and-update in the database so two windows cannot both save
+        // edits based on the same stale status.
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        var updateQuery = dbContext.AttendanceEntries.Where(item => item.Id == entry.Id);
+        if (!string.IsNullOrEmpty(expectedStatus))
+        {
+            updateQuery = updateQuery.Where(item => item.Status == expectedStatus);
+        }
+
+        var updated = await updateQuery.ExecuteUpdateAsync(
+            setters => setters
+                .SetProperty(item => item.Status, normalizedStatus)
+                .SetProperty(item => item.CheckinTimeUtc, checkinTime)
+                .SetProperty(item => item.UpdatedAtUtc, updatedAt)
+                .SetProperty(item => item.Notes, notes),
+            cancellationToken);
+        if (updated == 0)
+        {
+            return Failure<AttendanceSnapshot>(
+                "Trạng thái đã được thay đổi ở cửa sổ khác. Hãy nạp lại dữ liệu trước khi lưu.",
+                StatusCodes.Status409Conflict);
+        }
 
         dbContext.AuditLogs.Add(CreateAudit(
             sessionId,
@@ -305,8 +625,9 @@ public sealed class AttendanceService(
             previousStatus,
             normalizedStatus,
             CleanActor(request.Actor),
-            entry.Notes));
+            notes));
         await dbContext.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
 
         var snapshot = await GetSnapshotAsync(sessionId, cancellationToken);
         await BroadcastAsync(sessionId, "AttendanceUpdated", snapshot, cancellationToken);
@@ -319,8 +640,9 @@ public sealed class AttendanceService(
     {
         var session = string.IsNullOrWhiteSpace(sessionId)
             ? await dbContext.Sessions.AsNoTracking()
-                .OrderByDescending(item => item.IsOpen)
-                .ThenByDescending(item => item.OpenedAtUtc)
+                // FAP Demo must keep showing the same latest session after it
+                // closes, even when an older session was left open.
+                .OrderByDescending(item => item.OpenedAtUtc)
                 .FirstOrDefaultAsync(cancellationToken)
             : await dbContext.Sessions.AsNoTracking()
                 .FirstOrDefaultAsync(item => item.Id == sessionId, cancellationToken);
@@ -334,6 +656,20 @@ public sealed class AttendanceService(
             .Where(item => item.SessionId == session.Id)
             .OrderBy(item => item.RollNo)
             .ToListAsync(cancellationToken);
+        var deviceBindings = await dbContext.AttendanceDeviceBindings.AsNoTracking()
+            .Where(item => item.SessionId == session.Id)
+            .OrderByDescending(item => item.BlockedAttempts)
+            .ThenByDescending(item => item.LastBlockedAtUtc)
+            .Select(item => new DeviceBindingRecord(
+                item.Id,
+                item.DeviceHash.Substring(0, 8),
+                item.RollNo,
+                AsUtc(item.FirstSeenUtc),
+                AsUtc(item.LastSeenUtc),
+                item.BlockedAttempts,
+                item.LastBlockedRollNo,
+                item.LastBlockedAtUtc == null ? null : AsUtc(item.LastBlockedAtUtc.Value)))
+            .ToArrayAsync(cancellationToken);
 
         var records = entries.Select(entry => ToRecord(entry, session)).ToArray();
         var present = entries.Count(entry => entry.Status == AttendanceStatuses.Present);
@@ -360,7 +696,8 @@ public sealed class AttendanceService(
             pausedOtp?.RemainingSeconds,
             entries.Count,
             stats,
-            records);
+            records,
+            deviceBindings);
     }
 
     public async Task<ServiceResult<AttendanceSnapshot>> PauseOtpAsync(
@@ -500,7 +837,7 @@ public sealed class AttendanceService(
                 student.Slot.ToString(CultureInfo.InvariantCulture),
                 EscapeCsv(snapshot.Date),
                 EscapeCsv(student.Status),
-                EscapeCsv(student.CheckinTime?.ToString("O") ?? string.Empty),
+                EscapeCsv(FormatCsvDateTime(student.CheckinTime)),
                 EscapeCsv(student.Notes),
             }));
         }
@@ -519,6 +856,64 @@ public sealed class AttendanceService(
         await hubContext.Clients.Group(AttendanceHub.GetGroupName(sessionId))
             .SendAsync(eventName, snapshot, cancellationToken);
     }
+
+    private async Task ReplaceClassRosterAsync(
+        string classCode,
+        IReadOnlyCollection<StudentSeed> students,
+        CancellationToken cancellationToken)
+    {
+        var existing = await dbContext.ClassRosterStudents
+            .Where(student => student.ClassCode == classCode)
+            .ToListAsync(cancellationToken);
+        var existingByRollNo = existing
+            .ToDictionary(student => student.RollNo, StringComparer.OrdinalIgnoreCase);
+        var incomingRollNumbers = students
+            .Select(student => student.RollNo!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var now = DateTime.UtcNow;
+
+        foreach (var student in students)
+        {
+            var rollNo = student.RollNo!;
+            if (existingByRollNo.TryGetValue(rollNo, out var existingStudent))
+            {
+                existingStudent.FullName = student.FullName!;
+                existingStudent.Email = student.Email!;
+                existingStudent.UpdatedAtUtc = now;
+            }
+            else
+            {
+                dbContext.ClassRosterStudents.Add(new ClassRosterStudentEntity
+                {
+                    ClassCode = classCode,
+                    RollNo = rollNo,
+                    FullName = student.FullName!,
+                    Email = student.Email!,
+                    UpdatedAtUtc = now,
+                });
+            }
+        }
+
+        dbContext.ClassRosterStudents.RemoveRange(
+            existing.Where(student => !incomingRollNumbers.Contains(student.RollNo)));
+    }
+
+    private static StudentSeed[] NormalizeStudents(
+        IReadOnlyCollection<StudentSeed>? students) =>
+        (students ?? [])
+            .Where(student => !string.IsNullOrWhiteSpace(student.RollNo))
+            .Select(student =>
+            {
+                var rollNo = student.RollNo!.Trim().ToUpperInvariant();
+                return new StudentSeed(
+                    rollNo,
+                    string.IsNullOrWhiteSpace(student.FullName)
+                        ? rollNo
+                        : student.FullName.Trim(),
+                    student.Email?.Trim().ToLowerInvariant() ?? string.Empty);
+            })
+            .DistinctBy(student => student.RollNo, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
 
     private static AttendanceRecord ToRecord(
         AttendanceEntryEntity entry,
@@ -565,6 +960,13 @@ public sealed class AttendanceService(
         return Convert.ToHexString(hash)[..16];
     }
 
+    private static string FormatCsvDateTime(DateTime? value)
+    {
+        return value?.ToLocalTime().ToString(
+            "dd/MM/yyyy HH:mm:ss",
+            CultureInfo.InvariantCulture) ?? string.Empty;
+    }
+
     private static string EscapeCsv(string value)
     {
         if (value.IndexOfAny([',', '"', '\r', '\n']) < 0)
@@ -590,6 +992,7 @@ public sealed class AttendanceService(
 
     private static ServiceResult<T> Failure<T>(
         string message,
-        int statusCode = StatusCodes.Status400BadRequest) =>
-        new(false, message, default, statusCode);
+        int statusCode = StatusCodes.Status400BadRequest,
+        string? code = null) =>
+        new(false, message, default, statusCode, code);
 }
