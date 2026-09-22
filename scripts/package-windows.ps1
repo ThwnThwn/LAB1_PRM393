@@ -1,10 +1,10 @@
 param(
-    [string] $OutputDirectory = (Join-Path $PSScriptRoot 'dist')
+    [string] $OutputDirectory = (Join-Path $PSScriptRoot '..\dist')
 )
 
 $ErrorActionPreference = 'Stop'
 
-$projectRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
+$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $outputRoot = [System.IO.Path]::GetFullPath($OutputDirectory)
 $packageName = 'FAP-Attendance-Windows-x64'
 $packageDirectory = Join-Path $outputRoot $packageName
@@ -68,7 +68,7 @@ if (Test-Path -LiteralPath $publishedData) {
 
 Write-Host '4/5 - Dong goi desktop, cong sinh vien va cong FAP mo phong...' -ForegroundColor Cyan
 Copy-Item -LiteralPath $flutterRelease -Destination (Join-Path $packageDirectory 'app') -Recurse
-Copy-Item -LiteralPath (Join-Path $projectRoot 'docs') -Destination (Join-Path $packageDirectory 'docs') -Recurse
+Copy-Item -LiteralPath (Join-Path $projectRoot 'student-portal') -Destination (Join-Path $packageDirectory 'student-portal') -Recurse
 Copy-Item -LiteralPath (Join-Path $projectRoot 'fap-demo') -Destination (Join-Path $packageDirectory 'fap-demo') -Recurse
 Copy-Item -Path (Join-Path $launcherDirectory '*') -Destination $packageDirectory -Recurse
 

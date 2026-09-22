@@ -409,6 +409,7 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
 
   Widget _buildClosedState(BuildContext context, AttendanceProvider provider) {
     final hasSelectedSlot = provider.selectedSlot != null;
+    final hasStoredSession = provider.serverSessionId != null;
 
     return Container(
       decoration: BoxDecoration(
@@ -438,7 +439,9 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
             const SizedBox(height: 20),
             Text(
               hasSelectedSlot
-                  ? 'Phiên điểm danh đang đóng'
+                  ? hasStoredSession
+                        ? 'Phiên điểm danh đã đóng'
+                        : 'Chưa có phiên điểm danh'
                   : 'Chưa chọn ca dạy',
               textAlign: TextAlign.center,
               style: const TextStyle(
@@ -450,7 +453,9 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
             const SizedBox(height: 8),
             Text(
               hasSelectedSlot
-                  ? 'Mở phiên để tạo QR và bắt đầu nhận lượt điểm danh.'
+                  ? hasStoredSession
+                        ? 'Trạng thái đã lưu vẫn xem được ở Danh sách sinh viên. Chỉ tạo phiên mới khi muốn điểm danh lại bằng QR.'
+                        : 'Mở phiên để tạo QR và bắt đầu nhận lượt điểm danh.'
                   : 'Chọn một ca trong thời khóa biểu trước khi mở điểm danh.',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -473,7 +478,9 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
                   : const Icon(Icons.play_arrow_rounded),
               label: Text(
                 hasSelectedSlot
-                    ? 'Mở phiên điểm danh'
+                    ? hasStoredSession
+                          ? 'Tạo phiên mới'
+                          : 'Mở phiên điểm danh'
                     : 'Chọn ca trong thời khóa biểu',
               ),
             ),

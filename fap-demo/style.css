@@ -263,6 +263,59 @@ h1 {
   gap: 10px;
 }
 
+.session-picker-bar {
+  display: grid;
+  gap: 7px;
+  padding: 14px 24px;
+  background: var(--surface-soft);
+  border-top: 1px solid var(--border);
+}
+
+.session-picker-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.session-picker-field {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.session-picker-field > span {
+  color: #526076;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.session-picker-field select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 38px 8px 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  font-weight: 650;
+}
+
+.session-picker-field select:hover:not(:disabled) {
+  border-color: #9eabba;
+}
+
+.session-picker-field select:disabled {
+  cursor: not-allowed;
+  color: #667085;
+  background: #eef2f6;
+}
+
+.session-picker-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .button {
   min-height: 42px;
   display: inline-flex;
@@ -320,7 +373,7 @@ h1 {
   display: grid;
   grid-template-columns: 1.2fr 1fr .65fr 1fr 1fr;
   margin: 0;
-  background: var(--surface-soft);
+  background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
@@ -703,6 +756,15 @@ tbody tr:last-child td {
     flex-direction: column;
   }
 
+  .session-picker-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .session-picker-help {
+    max-width: none;
+    margin-bottom: 0;
+  }
+
   .session-actions,
   .toolbar-controls {
     justify-content: stretch;
@@ -776,6 +838,15 @@ tbody tr:last-child td {
 
   .session-heading {
     padding: 18px 16px;
+  }
+
+  .session-picker-bar {
+    gap: 8px;
+    padding: 14px 16px;
+  }
+
+  .session-picker-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   h1 {

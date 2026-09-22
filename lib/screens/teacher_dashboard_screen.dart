@@ -558,7 +558,9 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                           ? 'CHƯA CHỌN'
                           : provider.isSessionOpen
                           ? 'ĐANG MỞ'
-                          : 'ĐÃ ĐÓNG',
+                          : provider.serverSessionId != null
+                          ? 'ĐÃ ĐÓNG'
+                          : 'CHƯA CÓ PHIÊN',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
@@ -601,6 +603,8 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                     label: Text(
                       provider.isSessionOpen
                           ? 'Đóng điểm danh'
+                          : provider.serverSessionId != null
+                          ? 'Tạo phiên mới'
                           : 'Mở điểm danh',
                     ),
                     style: ElevatedButton.styleFrom(

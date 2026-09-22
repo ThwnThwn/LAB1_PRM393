@@ -374,11 +374,11 @@ var SCHEMA = {
   Rosters: ["ClassCode", "RollNo", "FullName", "Email", "UpdatedAt"],
   Sessions: ["SessionId", "ClassCode", "SubjectCode", "Slot", "SessionDate", "IsOpen", "OpenedAt", "ClosedAt", "LateAfterMinutes", "OtpPaused", "UpdatedAt"],
   Attendance: ["SessionId", "RollNo", "FullName", "Email", "ClassCode", "SubjectCode", "Slot", "Status", "CheckinTime", "Notes", "ConfirmationCode", "UpdatedAt"],
-  DeviceBindings: ["SessionId", "BindingId", "DeviceCode", "RollNo", "FirstSeen", "LastSeen", "BlockedAttempts", "LastBlockedRollNo", "LastBlockedAt", "UpdatedAt"],
+  DeviceBindings: ["SessionId", "BindingId", "DeviceCode", "RollNo", "FirstSeen", "LastSeen", "BlockedAttempts", "LastBlockedRollNo", "LastBlockedAt", "UpdatedAt", "DeviceHash", "NetworkHash", "UserAgentHash"],
   AuditLog: ["SessionId", "AuditId", "RollNo", "Action", "PreviousStatus", "NewStatus", "Actor", "Reason", "CreatedAt", "UpdatedAt"]
 };
 
-function getSheet(name) {
+function getSheet(name, prepareForWrite) {
   var book = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = book.getSheetByName(name) || book.insertSheet(name);
   var headers = SCHEMA[name];
@@ -386,6 +386,12 @@ function getSheet(name) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold").setBackground("#1B2A4A").setFontColor("#FFFFFF");
+  } else if (prepareForWrite) {
+    var currentHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+    var needsMigration = headers.some(function(header, index) {
+      return currentHeaders[index] !== header;
+    });
+    if (needsMigration) sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   }
   return sheet;
 }
@@ -410,7 +416,7 @@ function readObjects(name) {
 }
 
 function replaceRows(name, shouldRemove, rows) {
-  var sheet = getSheet(name);
+  var sheet = getSheet(name, true);
   var headers = SCHEMA[name];
   var current = sheet.getDataRange().getValues();
   var output = [headers];
@@ -445,14 +451,89 @@ function upsertSession(session, updatedAt) {
   }, row);
 }
 
+function boolValue(value) {
+  return value === true || String(value).toLowerCase() === "true";
+}
+
+function buildSessionPayload(session, allAttendance, allBindings, allAudit) {
+  if (!session) {
+    return {status: "success", sessionId: null, count: 0, students: [], deviceBindings: [], auditLogs: []};
+  }
+  var sessionId = String(session.SessionId);
+  var students = allAttendance.filter(function(item) {
+    return String(item.SessionId) === sessionId;
+  }).map(function(item) {
+    return {
+      sessionId: sessionId,
+      rollNo: item.RollNo,
+      fullName: item.FullName,
+      email: item.Email,
+      classCode: item.ClassCode,
+      subjectCode: item.SubjectCode,
+      slot: Number(item.Slot || session.Slot || 0),
+      status: item.Status || "NOT CHECKED",
+      checkinTime: item.CheckinTime || null,
+      notes: item.Notes || "",
+      confirmationCode: item.ConfirmationCode || ""
+    };
+  });
+  var deviceBindings = allBindings.filter(function(item) {
+    return String(item.SessionId) === sessionId;
+  }).map(function(item) {
+    return {
+      id: Number(item.BindingId || 0),
+      deviceCode: item.DeviceCode || "",
+      rollNo: item.RollNo || "",
+      firstSeen: item.FirstSeen || null,
+      lastSeen: item.LastSeen || null,
+      blockedAttempts: Number(item.BlockedAttempts || 0),
+      lastBlockedRollNo: item.LastBlockedRollNo || "",
+      lastBlockedAt: item.LastBlockedAt || null,
+      deviceHash: item.DeviceHash || "",
+      networkHash: item.NetworkHash || "",
+      userAgentHash: item.UserAgentHash || ""
+    };
+  });
+  var auditLogs = allAudit.filter(function(item) {
+    return String(item.SessionId) === sessionId;
+  }).map(function(item) {
+    return {
+      id: Number(item.AuditId || 0),
+      rollNo: item.RollNo || "",
+      action: item.Action || "",
+      previousStatus: item.PreviousStatus || "",
+      newStatus: item.NewStatus || "",
+      actor: item.Actor || "",
+      reason: item.Reason || "",
+      createdAt: item.CreatedAt || null
+    };
+  });
+  return {
+    status: "success",
+    sessionId: sessionId,
+    classCode: session.ClassCode || "",
+    subjectCode: session.SubjectCode || "",
+    slot: Number(session.Slot || 0),
+    date: session.SessionDate || "",
+    isOpen: boolValue(session.IsOpen),
+    openedAt: session.OpenedAt || null,
+    closedAt: session.ClosedAt || null,
+    lateAfterMinutes: Number(session.LateAfterMinutes || 10),
+    otpPaused: boolValue(session.OtpPaused),
+    count: students.length,
+    students: students,
+    deviceBindings: deviceBindings,
+    auditLogs: auditLogs
+  };
+}
+
 function doGet(e) {
   try {
     var params = (e && e.parameter) || {};
     var action = String(params.action || "health");
-    for (var name in SCHEMA) getSheet(name);
 
     if (action === "health") {
-      return jsonOutput({status: "success", database: "Google Sheets", version: 3});
+      return jsonOutput({status: "success", database: "Google Sheets", version: 5});
     }
 
     if (action === "getRoster" || action === "getStudents") {
@@ -465,7 +546,7 @@ function doGet(e) {
       return jsonOutput({status: "success", count: roster.length, students: roster});
     }
 
-    if (action === "getAttendance") {
+    if (action === "getAttendance" || action === "getSessions") {
       var wantedSession = String(params.sessionId || "");
       var wantedClass = String(params.classCode || "").toUpperCase();
       var wantedSubject = String(params.subjectCode || "").toUpperCase();
@@ -479,27 +560,20 @@ function doGet(e) {
       sessions.sort(function(a, b) {
         return new Date(b.UpdatedAt || b.OpenedAt).getTime() - new Date(a.UpdatedAt || a.OpenedAt).getTime();
       });
-      var session = sessions.length ? sessions[0] : null;
-      var students = session ? readObjects("Attendance").filter(function(item) {
-        return String(item.SessionId) === String(session.SessionId);
-      }).map(function(item) {
-        return {
-          rollNo: item.RollNo,
-          fullName: item.FullName,
-          email: item.Email,
-          group: item.ClassCode,
-          status: item.Status || "NOT CHECKED",
-          checkinTime: item.CheckinTime || "",
-          notes: item.Notes || ""
-        };
-      }) : [];
-      return jsonOutput({
-        status: "success",
-        sessionId: session ? session.SessionId : null,
-        isOpen: session ? (session.IsOpen === true || String(session.IsOpen).toLowerCase() === "true") : null,
-        count: students.length,
-        students: students
-      });
+      var attendance = readObjects("Attendance");
+      var bindings = readObjects("DeviceBindings");
+      var audit = readObjects("AuditLog");
+      if (action === "getSessions") {
+        var limit = Math.max(1, Math.min(100, Number(params.limit || 20)));
+        return jsonOutput({
+          status: "success",
+          count: Math.min(limit, sessions.length),
+          sessions: sessions.slice(0, limit).map(function(session) {
+            return buildSessionPayload(session, attendance, bindings, audit);
+          })
+        });
+      }
+      return jsonOutput(buildSessionPayload(sessions.length ? sessions[0] : null, attendance, bindings, audit));
     }
 
     return jsonOutput({status: "error", error: "Unsupported action"});
@@ -517,16 +591,31 @@ function doPost(e) {
 
     if (data.action === "seedDemo") {
       var demoClasses = [
-        {classCode: "SE1917", subjectCode: "PRN232", slot: 1},
-        {classCode: "SE1918", subjectCode: "PRM393", slot: 2},
-        {classCode: "SE1919", subjectCode: "EXE201", slot: 1},
-        {classCode: "SE1920", subjectCode: "HCM202", slot: 4}
+        {classCode: "SE1917", subjectCode: "PRN232"},
+        {classCode: "SE1918", subjectCode: "PRM393"},
+        {classCode: "SE1919", subjectCode: "EXE201"},
+        {classCode: "SE1920", subjectCode: "HCM202"}
+      ];
+      var demoSchedule = [
+        {sessionId: "DEMO-SE1917-PRN232", classCode: "SE1917", subjectCode: "PRN232", slot: 1, date: "2026-09-21", openedAt: "2026-09-21T00:00:00.000Z", closedAt: "2026-09-21T02:15:00.000Z", completed: true},
+        {sessionId: "DEMO-SE1918-PRM393", classCode: "SE1918", subjectCode: "PRM393", slot: 2, date: "2026-09-21", openedAt: "2026-09-21T02:30:00.000Z", closedAt: "2026-09-21T04:45:00.000Z", completed: true},
+        {sessionId: "DEMO-SE1920-HCM202", classCode: "SE1920", subjectCode: "HCM202", slot: 1, date: "2026-09-22", openedAt: "2026-09-22T00:00:00.000Z", closedAt: "2026-09-22T02:15:00.000Z", completed: true},
+        {sessionId: "DEMO-SE1919-EXE201", classCode: "SE1919", subjectCode: "EXE201", slot: 2, date: "2026-09-23", openedAt: "2026-09-23T02:30:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1917-PRN232-S1", classCode: "SE1917", subjectCode: "PRN232", slot: 1, date: "2026-09-24", openedAt: "2026-09-24T00:00:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, date: "2026-09-24", openedAt: "2026-09-24T02:30:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1920-HCM202-S4", classCode: "SE1920", subjectCode: "HCM202", slot: 1, date: "2026-09-25", openedAt: "2026-09-25T00:00:00.000Z", closedAt: "", completed: false}
       ];
       var names = [
         "Nguyễn Minh Anh", "Trần Gia Huy", "Lê Hoàng Yến", "Phạm Khánh Linh",
-        "Võ Quốc Bảo", "Đỗ Thu Trang", "Bùi Nhật Minh", "Nguyễn Mai Hào Tiến"
+        "Võ Quốc Bảo", "Đỗ Thu Trang", "Bùi Nhật Minh", "Nguyễn Mai Hào Tiến",
+        "Phan Thị Thảo Vy", "Chu Vương Mạnh", "Nguyễn Hoàng Nam", "Trương Quỳnh Như",
+        "Lý Gia Bảo", "Huỳnh Ngọc Hân", "Đặng Minh Quân", "Hồ Nhật Linh",
+        "Phan Tuấn Kiệt", "Vũ Thảo Nguyên", "Nguyễn Đức Anh", "Trần Khánh Vy",
+        "Lê Quốc Trung", "Phạm Ngọc Mai", "Võ Minh Khang", "Đỗ Hà My",
+        "Bùi Anh Tuấn", "Nguyễn Thanh Trúc", "Trần Gia Minh", "Lê Thu Hương",
+        "Phạm Đức Long", "Võ Hoài An", "Đặng Quốc Khánh", "Hồ Ngọc Diệp",
+        "Phan Minh Triết", "Vũ Khánh An", "Nguyễn Hải Đăng"
       ];
-      var demoDate = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd");
       var sessionRows = [];
       var attendanceRows = [];
       var auditRows = [];
@@ -534,33 +623,48 @@ function doPost(e) {
       for (var c = 0; c < demoClasses.length; c++) {
         var demoClass = demoClasses[c];
         var rosterRows = [];
-        var demoSessionId = ["DEMO", demoClass.classCode, demoClass.subjectCode].join("-");
-        sessionRows.push([
-          demoSessionId, demoClass.classCode, demoClass.subjectCode, demoClass.slot,
-          demoDate, false, now, now, 10, false, now
-        ]);
-
         for (var s = 0; s < names.length; s++) {
-          var rollNo = demoClass.classCode.substring(0, 2) +
-            String(191701 + c * 100 + s);
+          var rollNo = "SE" + String(191701 + s);
           var email = rollNo.toLowerCase() + "@fpt.edu.vn";
           rosterRows.push([demoClass.classCode, rollNo, names[s], email, now]);
-
-          var status = ["PRESENT", "PRESENT", "LATE", "ABSENT", "NOT CHECKED"][s % 5];
-          var checkinTime = status === "PRESENT" || status === "LATE" ? now : "";
-          attendanceRows.push([
-            demoSessionId, rollNo, names[s], email, demoClass.classCode,
-            demoClass.subjectCode, demoClass.slot, status, checkinTime,
-            status === "ABSENT" ? "Vắng có phép (demo)" : "", "DEMO" + (s + 1), now
-          ]);
         }
 
         replaceRows("Rosters", function(item) {
           return String(item.ClassCode).toUpperCase() === demoClass.classCode;
         }, rosterRows);
+      }
+
+      for (var d = 0; d < demoSchedule.length; d++) {
+        var demoClassSession = demoSchedule[d];
+        sessionRows.push([
+          demoClassSession.sessionId, demoClassSession.classCode, demoClassSession.subjectCode,
+          demoClassSession.slot, demoClassSession.date, false, demoClassSession.openedAt,
+          demoClassSession.closedAt, 10, false, now
+        ]);
+
+        for (var a = 0; a < names.length; a++) {
+          var studentRollNo = "SE" + String(191701 + a);
+          var studentEmail = studentRollNo.toLowerCase() + "@fpt.edu.vn";
+          var status = "NOT CHECKED";
+          if (demoClassSession.completed) {
+            status = a === 6 || a === 18
+              ? "ABSENT"
+              : (a === 4 || a === 10 || a === 22 ? "LATE" : "PRESENT");
+          }
+          var checkinTime = status === "PRESENT" || status === "LATE"
+            ? demoClassSession.openedAt
+            : "";
+          attendanceRows.push([
+            demoClassSession.sessionId, studentRollNo, names[a], studentEmail,
+            demoClassSession.classCode, demoClassSession.subjectCode, demoClassSession.slot,
+            status, checkinTime, status === "ABSENT" ? "Vắng có phép (demo)" : "",
+            "DEMO" + String(a + 1), now
+          ]);
+        }
+
         auditRows.push([
-          demoSessionId, "DEMO-AUDIT-" + (c + 1), "", "DEMO_SEEDED", "", "",
-          "Giảng viên demo", "Tạo dữ liệu minh họa", now, now
+          demoClassSession.sessionId, 1000 + d, "", "DEMO_SEEDED", "", "",
+          "Giảng viên demo", "Seed lịch tuần 21/09–27/09/2026", now, now
         ]);
       }
 
@@ -575,16 +679,15 @@ function doPost(e) {
       }, auditRows);
       replaceRows("DeviceBindings", function(item) {
         return String(item.SessionId).indexOf("DEMO-") === 0;
-      }, [[
-        "DEMO-SE1917-PRN232", "DEMO-DEVICE-1", "DV-DEMO-01", "SE191701",
-        now, now, 1, "SE191702", now, now
-      ]]);
+      }, []);
 
       return jsonOutput({
         status: "success",
         classCount: demoClasses.length,
-        studentCount: demoClasses.length * names.length,
-        sessionCount: demoClasses.length
+        studentCount: names.length,
+        rosterRowCount: demoClasses.length * names.length,
+        sessionCount: demoSchedule.length,
+        attendanceCount: demoSchedule.length * names.length
       });
     }
 
@@ -628,7 +731,8 @@ function doPost(e) {
         deviceRows.push([
           sessionId, binding.id, binding.deviceCode, binding.rollNo, binding.firstSeen,
           binding.lastSeen, binding.blockedAttempts, binding.lastBlockedRollNo || "",
-          binding.lastBlockedAt || "", now
+          binding.lastBlockedAt || "", now, binding.deviceHash || "",
+          binding.networkHash || "", binding.userAgentHash || ""
         ]);
       }
       replaceRows("DeviceBindings", function(item) {

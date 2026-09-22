@@ -33,13 +33,14 @@ migrate_working_dir/
 /build/
 /coverage/
 /dist/
+/.tmp/
 
 # .NET build outputs
 **/bin/
 **/obj/
 server/App_Data/
 
-# Local databases and generated SQLite files
+# Legacy local database files (không còn được ứng dụng sử dụng)
 *.db
 *.db-shm
 *.db-wal

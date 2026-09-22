@@ -21,9 +21,9 @@ cho demo voi du lieu gia lap, khong phai phuong an production.
 
 Luu y
 -----
-- Khong tach rieng file .exe khoi cac thu muc app, server va docs.
+- Khong tach rieng file .exe khoi cac thu muc app, server va student-portal.
 - Google Sheets la database chinh. Cau hinh Apps Script Web App URL trong app truoc khi import/mo phien.
-- SQLite trong server\App_Data\attendance.db chi la cache runtime cuc bo.
+- Google Sheets la database duy nhat; server khong dung SQLite.
 - Log khoi dong nam trong %LOCALAPPDATA%\FAP Attendance\Logs.
 - Dong cua so ung dung de backend do goi nay khoi dong cung duoc tat.
 

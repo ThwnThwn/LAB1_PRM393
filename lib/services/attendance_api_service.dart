@@ -134,6 +134,29 @@ class AttendanceApiService {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getSessions({
+    int limit = 100,
+    String? classCode,
+    String? subjectCode,
+    int? slot,
+  }) async {
+    final query = Uri(
+      queryParameters: {
+        'limit': '$limit',
+        'classCode': ?classCode,
+        'subjectCode': ?subjectCode,
+        if (slot != null) 'slot': '$slot',
+      },
+    ).query;
+    final payload = await _sendJson('GET', '/api/sessions?$query', null);
+    final sessions = payload['sessions'];
+    if (sessions is! List) return [];
+    return sessions
+        .whereType<Map>()
+        .map((session) => Map<String, dynamic>.from(session))
+        .toList();
+  }
+
   Future<List<Map<String, dynamic>>> getClassRoster(String classCode) async {
     final payload = await _sendJson(
       'GET',
@@ -185,6 +208,21 @@ class AttendanceApiService {
         if (expectedStatus != null) 'expectedStatus': expectedStatus.toLabel(),
       },
     );
+  }
+
+  Future<Map<String, dynamic>> saveAttendanceBatch(
+    AttendanceSession session,
+    List<Map<String, String>> changes,
+  ) {
+    return _sendJson('POST', '/api/sessions/attendance/batch', {
+      'sessionId': session.serverSessionId,
+      'classCode': session.classCode,
+      'subjectCode': session.subjectCode,
+      'slot': session.slot,
+      'date': session.date.toIso8601String().split('T').first,
+      'actor': 'Giảng viên',
+      'changes': changes,
+    });
   }
 
   Future<List<Map<String, dynamic>>> getAuditLogs(String sessionId) async {

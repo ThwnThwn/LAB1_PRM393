@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1b2a4a">
   <title>Cổng FAP mô phỏng | Lab 1</title>
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=20260922-4">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
@@ -47,6 +47,26 @@
             <span class="change-count" id="change-count" hidden>0</span>
           </button>
         </div>
+      </div>
+
+      <div class="session-picker-bar">
+        <div class="session-picker-fields">
+          <label class="session-picker-field" for="class-filter">
+            <span>Chọn lớp</span>
+            <select id="class-filter" aria-describedby="session-picker-help" disabled>
+              <option value="">Tất cả lớp</option>
+            </select>
+          </label>
+          <label class="session-picker-field" for="subject-filter">
+            <span>Chọn môn học</span>
+            <select id="subject-filter" aria-describedby="session-picker-help" disabled>
+              <option value="">Tất cả môn học</option>
+            </select>
+          </label>
+        </div>
+        <p id="session-picker-help" class="session-picker-help">
+          Chọn lớp và môn học để tự xem ca học mới nhất phù hợp.
+        </p>
       </div>
 
       <dl class="session-details" aria-label="Thông tin ca học">
@@ -102,7 +122,7 @@
       <div class="table-toolbar">
         <div>
           <h2 id="roster-title">Sinh viên trong lớp</h2>
-          <p id="last-updated">Tự động cập nhật mỗi 2 giây</p>
+          <p id="last-updated">Tự động cập nhật mỗi 5 giây</p>
         </div>
         <div class="toolbar-controls">
           <label class="search-box" for="student-search">
@@ -152,6 +172,6 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="./app.js" defer></script>
+  <script src="./app.js?v=20260922-4" defer></script>
 </body>
 </html>

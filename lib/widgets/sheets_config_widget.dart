@@ -39,8 +39,9 @@ class _SheetsConfigWidgetState extends State<SheetsConfigWidget> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Tạo dữ liệu demo?'),
         content: const Text(
-          'Ứng dụng sẽ tạo 4 roster (SE1917–SE1920), 4 phiên mẫu, '
-          '32 bản ghi điểm danh và dữ liệu thiết bị/audit. Các dòng demo cũ '
+          'Ứng dụng sẽ tạo một roster chung gồm 35 sinh viên cho 4 lớp '
+          '(SE1917–SE1920), 7 ca học theo lịch tuần 21/09–27/09/2026 và '
+          '245 bản ghi điểm danh. Các dòng demo cũ và roster của 4 lớp này '
           'sẽ được thay thế; dữ liệu khác trong Sheet vẫn được giữ nguyên.',
         ),
         actions: [
@@ -167,7 +168,7 @@ class _SheetsConfigWidgetState extends State<SheetsConfigWidget> {
                           const SizedBox(height: 4),
                           Text(
                             isReady
-                                ? 'Roster, phiên, điểm danh, thiết bị và audit log được ghi vào Sheet. SQLite chỉ là cache cục bộ.'
+                                ? 'Roster, phiên, điểm danh, thiết bị và audit log đều được đọc và ghi trực tiếp trên Sheet.'
                                 : (provider.sheetsConfigurationMessage ??
                                       'Hãy deploy Apps Script và lưu Web App URL để mở khóa chức năng điểm danh.'),
                             style: TextStyle(

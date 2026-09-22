@@ -85,7 +85,7 @@ class RosterTableWidget extends StatelessWidget {
                 const SizedBox(width: 8),
                 const Expanded(
                   child: Text(
-                    'Mở phiên điểm danh để chỉnh trạng thái và đồng bộ với cổng FAP mô phỏng.',
+                    'Có thể sửa nhiều dòng trước khi mở phiên QR. Bấm Lưu để ghi một lần lên Google Sheets.',
                     style: TextStyle(color: Color(0xFF334155), fontSize: 12),
                   ),
                 ),
@@ -210,7 +210,16 @@ class RosterTableWidget extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Không tìm thấy sinh viên phù hợp.',
+                          provider.loadingSelectedSession
+                              ? 'Đang tải phiên và danh sách từ Google Sheets...'
+                              : provider.lastCheckinNotification?.startsWith(
+                                      'Không thể đồng bộ phiên',
+                                    ) ==
+                                    true
+                              ? 'Không tải được dữ liệu từ Google Sheets. Hãy kiểm tra kết nối rồi chọn lại ca.'
+                              : provider.students.isEmpty
+                              ? 'Google Sheets chưa có danh sách sinh viên cho lớp này.'
+                              : 'Không tìm thấy sinh viên phù hợp.',
                           style: TextStyle(
                             color: Colors.grey.shade500,
                             fontSize: 14,
@@ -281,6 +290,70 @@ class RosterTableWidget extends StatelessWidget {
                   ),
           ),
         ),
+        if (provider.hasUnsavedAttendanceChanges)
+          Container(
+            margin: const EdgeInsets.only(top: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFF5C09C)),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x140F172A),
+                  blurRadius: 12,
+                  offset: Offset(0, 4),
+                ),
+              ],
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.edit_note_rounded, color: Color(0xFFC45A16)),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '${provider.unsavedAttendanceCount} dòng chưa lưu lên Google Sheets',
+                    style: const TextStyle(
+                      color: Color(0xFF7C3E15),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: provider.savingAttendanceDraft
+                      ? null
+                      : provider.discardAttendanceDraft,
+                  child: const Text('Hủy thay đổi'),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: provider.savingAttendanceDraft
+                      ? null
+                      : () => provider.saveAttendanceDraft(),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFFF36F21),
+                    foregroundColor: Colors.white,
+                  ),
+                  icon: provider.savingAttendanceDraft
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.save_outlined, size: 18),
+                  label: Text(
+                    provider.savingAttendanceDraft
+                        ? 'Đang lưu…'
+                        : 'Lưu ${provider.unsavedAttendanceCount} dòng',
+                  ),
+                ),
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -359,6 +432,8 @@ class RosterTableWidget extends StatelessWidget {
     AttendanceProvider provider,
   ) {
     final statusColor = _getStatusColor(student.status);
+    final isDrafted = provider.isAttendanceDrafted(student.rollNo);
+    final isConflicted = provider.isAttendanceDraftConflicted(student.rollNo);
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -386,9 +461,37 @@ class RosterTableWidget extends StatelessWidget {
           // MSSV
           SizedBox(
             width: 100,
-            child: Text(
-              student.rollNo,
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            child: Row(
+              children: [
+                Flexible(
+                  child: Text(
+                    student.rollNo,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (isDrafted)
+                  Tooltip(
+                    message: isConflicted
+                        ? 'Dòng này đã thay đổi trên Sheet; hãy kiểm tra trước khi lưu'
+                        : 'Thay đổi chưa lưu',
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Icon(
+                        isConflicted
+                            ? Icons.warning_amber_rounded
+                            : Icons.circle,
+                        size: isConflicted ? 15 : 7,
+                        color: isConflicted
+                            ? const Color(0xFFDC2626)
+                            : const Color(0xFFF36F21),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(width: 12),
@@ -492,7 +595,8 @@ class RosterTableWidget extends StatelessWidget {
                   );
                 }).toList(),
                 onChanged:
-                    provider.serverSessionId == null ||
+                    provider.loadingSelectedSession ||
+                        provider.savingAttendanceDraft ||
                         provider.isStatusUpdatePending(student.rollNo)
                     ? null
                     : (newStatus) {
