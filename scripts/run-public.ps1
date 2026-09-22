@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 
-$projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $serverProject = Join-Path $projectRoot 'server\Attendance.Api.csproj'
 $tunnelTools = Join-Path $projectRoot 'packaging\windows\public-tunnel-tools.ps1'
 $healthUrl = 'http://127.0.0.1:8080/api/health'

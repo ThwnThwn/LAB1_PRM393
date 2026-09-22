@@ -7,6 +7,7 @@ import '../models/fap_class_slot.dart';
 import '../services/otp_service.dart';
 import '../services/google_sheets_service.dart';
 import '../services/attendance_api_service.dart';
+import '../services/attendance_session_matcher.dart';
 import '../services/attendance_live_service.dart';
 import '../services/student_csv_import_service.dart';
 
@@ -16,9 +17,10 @@ class AttendanceProvider extends ChangeNotifier {
   Timer? _otpTimer;
   Timer? _dashboardPollTimer;
   final GoogleSheetsService _sheetsService = GoogleSheetsService();
-  final AttendanceApiService _attendanceApi = AttendanceApiService();
-  final AttendanceLiveService _liveService = AttendanceLiveService();
+  final AttendanceApiService _attendanceApi;
+  final AttendanceLiveService _liveService;
   bool _sessionOperationInProgress = false;
+  bool _loadingSelectedSession = false;
   bool _refreshingDashboard = false;
   bool _otpRotationPaused = false;
   bool _otpPauseOperationInProgress = false;
@@ -48,7 +50,11 @@ class AttendanceProvider extends ChangeNotifier {
   // Navigation callback (set by dashboard to switch tabs)
   VoidCallback? onNavigateToAttendance;
 
-  AttendanceProvider() {
+  AttendanceProvider({
+    AttendanceApiService? attendanceApi,
+    AttendanceLiveService? liveService,
+  }) : _attendanceApi = attendanceApi ?? AttendanceApiService(),
+       _liveService = liveService ?? AttendanceLiveService() {
     _currentSession = AttendanceSession(
       classCode: '',
       subjectCode: '',
@@ -57,7 +63,7 @@ class AttendanceProvider extends ChangeNotifier {
     );
     _loadSampleTimetable();
     _startOtpEngine();
-    unawaited(loadGoogleSheetsConfiguration());
+    unawaited(loadGoogleSheetsConfiguration(verify: true));
   }
 
   // Getters
@@ -83,6 +89,7 @@ class AttendanceProvider extends ChangeNotifier {
 
   bool get isSessionOpen => _currentSession.isOpen;
   bool get sessionOperationInProgress => _sessionOperationInProgress;
+  bool get loadingSelectedSession => _loadingSelectedSession;
   bool get isOtpPaused => _otpRotationPaused;
   bool get otpPauseOperationInProgress => _otpPauseOperationInProgress;
   String? get serverSessionId => _currentSession.serverSessionId;
@@ -413,7 +420,9 @@ class AttendanceProvider extends ChangeNotifier {
     }
 
     try {
-      _auditLogs = await _attendanceApi.getAuditLogs(sessionId);
+      final logs = await _attendanceApi.getAuditLogs(sessionId);
+      if (_currentSession.serverSessionId != sessionId) return;
+      _auditLogs = logs;
       notifyListeners();
     } catch (error) {
       debugPrint('Audit log refresh failed: $error');
@@ -470,6 +479,9 @@ class AttendanceProvider extends ChangeNotifier {
           }
         },
       );
+      if (_currentSession.serverSessionId != sessionId) {
+        await _liveService.disconnect();
+      }
     } catch (error) {
       debugPrint('SignalR connection failed; polling remains active: $error');
     }
@@ -599,25 +611,10 @@ class AttendanceProvider extends ChangeNotifier {
       otpRemainingSeconds: _currentSession.otpRemainingSeconds,
     );
 
-    // Load class-specific roster
-    if (_classRosters.containsKey(slot.classCode)) {
-      _students = _classRosters[slot.classCode]!
-          .map(
-            (s) => Student(
-              rollNo: s.rollNo,
-              fullName: s.fullName,
-              email: s.email,
-              group: s.group,
-              status: AttendanceStatus.notChecked,
-            ),
-          )
-          .toList();
-    } else {
-      _students = [];
-    }
-
+    _students = [];
+    _loadingSelectedSession = true;
     _lastCheckinNotification =
-        'Đã chọn ${slot.subjectCode} - ${slot.classCode} (Slot ${slot.slot})';
+        'Đang tải ${slot.subjectCode} - ${slot.classCode} (Slot ${slot.slot}) từ Google Sheets...';
     notifyListeners();
     _rosterLoadFuture = _loadPersistedClassRoster(slot.classCode, slot.id);
     unawaited(_rosterLoadFuture);
@@ -628,14 +625,42 @@ class AttendanceProvider extends ChangeNotifier {
     String classCode,
     String slotId,
   ) async {
+    final selectedDate = _currentSession.date;
+    final selectedSubject = _currentSession.subjectCode;
+    final selectedSlotNumber = _currentSession.slot;
+
+    bool sameSelection() =>
+        _selectedSlot?.id == slotId &&
+        DateUtils.isSameDay(_currentSession.date, selectedDate);
+    bool selectionChanged() =>
+        !sameSelection() || _currentSession.serverSessionId != null;
+
     try {
-      final roster = await _attendanceApi.getClassRoster(classCode);
-      if (roster.isEmpty ||
-          _selectedSlot?.id != slotId ||
-          _currentSession.serverSessionId != null) {
+      final sessions = await _attendanceApi.getSessions(
+        classCode: classCode,
+        subjectCode: selectedSubject,
+        slot: selectedSlotNumber,
+      );
+      if (selectionChanged()) return;
+      final matching = AttendanceSessionMatcher.forTimetableSlot(
+        sessions,
+        classCode: classCode,
+        subjectCode: selectedSubject,
+        slot: selectedSlotNumber,
+        date: selectedDate,
+      );
+      if (matching != null) {
+        _applyServerSnapshot(matching);
+        _lastCheckinNotification =
+            'Đã đồng bộ phiên $selectedSubject - $classCode từ Google Sheets.';
+        _startDashboardPolling();
+        unawaited(_connectLiveUpdates());
+        unawaited(loadAuditLogs());
         return;
       }
 
+      final roster = await _attendanceApi.getClassRoster(classCode);
+      if (selectionChanged()) return;
       final students = roster
           .map((data) {
             return Student(
@@ -649,9 +674,20 @@ class AttendanceProvider extends ChangeNotifier {
           .toList();
       _classRosters[classCode] = students;
       _students = students;
+      _lastCheckinNotification =
+          'Ca này chưa có phiên điểm danh; đã tải $classCode từ Google Sheets.';
       notifyListeners();
     } catch (error) {
-      debugPrint('Không thể tải roster đã lưu: $error');
+      debugPrint('Không thể tải phiên điểm danh đã lưu: $error');
+      if (selectionChanged()) return;
+      _lastCheckinNotification =
+          'Không thể đồng bộ phiên từ Google Sheets: $error';
+      notifyListeners();
+    } finally {
+      if (sameSelection()) {
+        _loadingSelectedSession = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -1020,41 +1056,17 @@ class AttendanceProvider extends ChangeNotifier {
         campus: 'FUHCM',
       ),
       FapClassSlot(
-        id: 'exe201-tue-1',
+        id: 'exe201-wed-2',
         subjectCode: 'EXE201',
         subjectName: 'Experiential Entrepreneurship 1',
         classCode: 'SE1919',
-        slot: 1,
-        dayOfWeek: 2,
+        slot: 2,
+        dayOfWeek: 3,
         room: 'NVH 707',
-        slotTime: '7:00 - 9:15',
+        slotTime: '9:30 - 11:45',
         instructor: 'ThanhNV',
         campus: 'FUHCM',
         isOnline: true,
-      ),
-      FapClassSlot(
-        id: 'swp391-tue-2',
-        subjectCode: 'SWP391',
-        subjectName: 'Application development project',
-        classCode: 'SE1918',
-        slot: 2,
-        dayOfWeek: 2,
-        room: 'NVH 612',
-        slotTime: '9:30 - 11:45',
-        instructor: 'TuanPM',
-        campus: 'FUHCM',
-      ),
-      FapClassSlot(
-        id: 'mln111-tue-3',
-        subjectCode: 'MLN111',
-        subjectName: 'Philosophy of Marxism-Leninism',
-        classCode: 'SE1917',
-        slot: 3,
-        dayOfWeek: 2,
-        room: 'NVH 404',
-        slotTime: '12:30 - 14:45',
-        instructor: 'HungNQ',
-        campus: 'FUHCM',
       ),
       FapClassSlot(
         id: 'prn232-thu-1',
@@ -1082,168 +1094,30 @@ class AttendanceProvider extends ChangeNotifier {
         campus: 'FUHCM',
       ),
       FapClassSlot(
-        id: 'mln111-fri-3',
-        subjectCode: 'MLN111',
-        subjectName: 'Philosophy of Marxism-Leninism',
-        classCode: 'SE1917',
-        slot: 3,
-        dayOfWeek: 5,
-        room: 'NVH 404',
-        slotTime: '12:30 - 14:45',
-        instructor: 'HungNQ',
-        campus: 'FUHCM',
-      ),
-      FapClassSlot(
-        id: 'swp391-fri-2',
-        subjectCode: 'SWP391',
-        subjectName: 'Application development project',
-        classCode: 'SE1918',
-        slot: 2,
-        dayOfWeek: 5,
-        room: 'NVH 612',
-        slotTime: '9:30 - 11:45',
-        instructor: 'TuanPM',
-        campus: 'FUHCM',
-      ),
-      FapClassSlot(
-        id: 'ite302c-fri-7',
-        subjectCode: 'ITE302c',
-        subjectName: 'Ethics in IT',
-        classCode: 'SE1917',
-        slot: 5,
-        dayOfWeek: 5,
-        room: 'Online',
-        slotTime: '17:45 - 19:15',
-        instructor: 'LongDT',
-        campus: 'FUHCM',
-        isOnline: true,
-        meetUrl: 'https://meet.google.com/abc-defg-hij',
-      ),
-      FapClassSlot(
-        id: 'mln111-sat-1',
-        subjectCode: 'MLN111',
-        subjectName: 'Philosophy of Marxism-Leninism',
-        classCode: 'SE1917',
-        slot: 1,
-        dayOfWeek: 6,
-        room: 'NVH 612',
-        slotTime: '7:00 - 9:15',
-        instructor: 'HungNQ',
-        campus: 'FUHCM',
-      ),
-      FapClassSlot(
-        id: 'hcm202-mon-4',
+        id: 'hcm202-tue-1',
         subjectCode: 'HCM202',
         subjectName: 'Ho Chi Minh Ideology',
         classCode: 'SE1920',
-        slot: 4,
-        dayOfWeek: 1,
+        slot: 1,
+        dayOfWeek: 2,
         room: 'NVH 307',
-        slotTime: '15:00 - 17:15',
+        slotTime: '7:00 - 9:15',
         sessionNumber: 5,
         instructor: 'HaNT',
         campus: 'FUHCM',
       ),
       FapClassSlot(
-        id: 'hcm202-thu-4',
+        id: 'hcm202-fri-1',
         subjectCode: 'HCM202',
         subjectName: 'Ho Chi Minh Ideology',
         classCode: 'SE1920',
-        slot: 4,
-        dayOfWeek: 4,
+        slot: 1,
+        dayOfWeek: 5,
         room: 'NVH 307',
-        slotTime: '15:00 - 17:15',
+        slotTime: '7:00 - 9:15',
         sessionNumber: 6,
         instructor: 'HaNT',
         campus: 'FUHCM',
-      ),
-    ];
-
-    // Pre-populate rosters
-    _classRosters['SE1917'] = [
-      Student(
-        rollNo: 'SE182173',
-        fullName: 'Bùi Nhật Minh',
-        email: 'minhnbse182173@fpt.edu.vn',
-        group: 'SE1917',
-      ),
-      Student(
-        rollNo: 'SE171234',
-        fullName: 'Nguyen Van Nam',
-        email: 'namnvse171234@fpt.edu.vn',
-        group: 'SE1917',
-      ),
-      Student(
-        rollNo: 'SE180987',
-        fullName: 'Tran Thi Mai',
-        email: 'maittse180987@fpt.edu.vn',
-        group: 'SE1917',
-      ),
-      Student(
-        rollNo: 'SE183456',
-        fullName: 'Le Hoang Long',
-        email: 'longlhse183456@fpt.edu.vn',
-        group: 'SE1917',
-      ),
-    ];
-    _classRosters['SE1918'] = [
-      Student(
-        rollNo: 'SE182173',
-        fullName: 'Bùi Nhật Minh',
-        email: 'minhnbse182173@fpt.edu.vn',
-        group: 'SE1918',
-      ),
-      Student(
-        rollNo: 'SE185111',
-        fullName: 'Pham Thu Ha',
-        email: 'haptse185111@fpt.edu.vn',
-        group: 'SE1918',
-      ),
-      Student(
-        rollNo: 'SE186222',
-        fullName: 'Dao Minh Tuan',
-        email: 'tuandmse186222@fpt.edu.vn',
-        group: 'SE1918',
-      ),
-    ];
-    _classRosters['SE1919'] = [
-      Student(
-        rollNo: 'SE191901',
-        fullName: 'Nguyễn Minh Anh',
-        email: 'anhngmse191901@fpt.edu.vn',
-        group: 'SE1919',
-      ),
-      Student(
-        rollNo: 'SE191902',
-        fullName: 'Trần Gia Huy',
-        email: 'huytgse191902@fpt.edu.vn',
-        group: 'SE1919',
-      ),
-      Student(
-        rollNo: 'SE191903',
-        fullName: 'Lê Hoàng Yến',
-        email: 'yenlhse191903@fpt.edu.vn',
-        group: 'SE1919',
-      ),
-    ];
-    _classRosters['SE1920'] = [
-      Student(
-        rollNo: 'SE192001',
-        fullName: 'Phạm Khánh Linh',
-        email: 'linhpkse192001@fpt.edu.vn',
-        group: 'SE1920',
-      ),
-      Student(
-        rollNo: 'SE192002',
-        fullName: 'Võ Quốc Bảo',
-        email: 'baovqse192002@fpt.edu.vn',
-        group: 'SE1920',
-      ),
-      Student(
-        rollNo: 'SE192003',
-        fullName: 'Đỗ Thu Trang',
-        email: 'trangdtse192003@fpt.edu.vn',
-        group: 'SE1920',
       ),
     ];
   }

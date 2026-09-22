@@ -210,7 +210,16 @@ class RosterTableWidget extends StatelessWidget {
                         ),
                         const SizedBox(height: 12),
                         Text(
-                          'Không tìm thấy sinh viên phù hợp.',
+                          provider.loadingSelectedSession
+                              ? 'Đang tải phiên và danh sách từ Google Sheets...'
+                              : provider.lastCheckinNotification?.startsWith(
+                                      'Không thể đồng bộ phiên',
+                                    ) ==
+                                    true
+                              ? 'Không tải được dữ liệu từ Google Sheets. Hãy kiểm tra kết nối rồi chọn lại ca.'
+                              : provider.students.isEmpty
+                              ? 'Google Sheets chưa có danh sách sinh viên cho lớp này.'
+                              : 'Không tìm thấy sinh viên phù hợp.',
                           style: TextStyle(
                             color: Colors.grey.shade500,
                             fontSize: 14,

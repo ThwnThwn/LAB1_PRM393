@@ -19,11 +19,11 @@
   mở khóa ngoại lệ có lý do.
 - Dashboard số lượng có mặt, trễ, vắng, chưa điểm danh và tỷ lệ chuyên cần.
 - Cập nhật dashboard trực tiếp bằng SignalR, có polling dự phòng.
-- Lưu roster, phiên, trạng thái, thiết bị và nhật ký chỉnh sửa trong Google Sheets.
-- SQLite chỉ giữ cache cục bộ cho xử lý OTP, chống điểm danh hộ và realtime trong buổi học.
+- Lưu roster, phiên, trạng thái, thiết bị và nhật ký chỉnh sửa trực tiếp trong Google Sheets.
+- Không dùng database cục bộ; backend chỉ giữ trạng thái OTP và kết nối SignalR tạm thời trong RAM.
 - Xuất CSV riêng cho từng buổi học.
 - Trang web giảng viên **`/fap-demo/`** là cổng FAP mô phỏng độc lập, tự cập nhật từ desktop/
-  điện thoại mỗi 2 giây và cho phép lưu Present/Absent về Google Sheets.
+  điện thoại mỗi 5 giây và cho phép lưu Present/Absent về Google Sheets.
 
 ## Kiến trúc
 
@@ -34,7 +34,6 @@
 | Cổng sinh viên | HTML/CSS/JavaScript | `http://<IP-LAN>:8080/student/` |
 | Cổng FAP mô phỏng | HTML/CSS/JavaScript | `http://<IP-LAN>:8080/fap-demo/` |
 | Database chính | Google Sheets qua Apps Script | Web App URL do giảng viên cấu hình |
-| Cache runtime | SQLite | `server/App_Data/attendance.db` |
 
 Luồng dữ liệu chính:
 
@@ -45,7 +44,7 @@ ASP.NET Core ghi dữ liệu nghiệp vụ vào Google Sheets
             ↓
 Sinh viên quét QR → nhập OTP → gửi check-in
             ↓
-Google Sheets lưu kết quả, SQLite giữ cache runtime
+Google Sheets lưu và trả về toàn bộ dữ liệu nghiệp vụ
             ↓
 SignalR cập nhật desktop, cổng FAP mô phỏng tự tải snapshot mới
             ↓
@@ -158,7 +157,9 @@ Nếu chỉ test trên cùng máy, có thể dùng `http://127.0.0.1:8080`. Khô
 1. Trên trang **Thời khóa biểu tuần**, chọn tuần và lọc **Mã lớp điểm danh**
    (`SE1917`–`SE1920`).
 2. Bấm đúng ca học trên lưới Slot 1–8 rồi chọn **Điểm danh lớp này**.
-3. Vào **Điểm danh QR & OTP 10s** và bấm **Mở điểm danh**.
+3. Nếu ca chưa có phiên, vào **Điểm danh QR & OTP 10s** và bấm **Mở điểm danh**.
+   Nếu ca đã có phiên trong Google Sheets, desktop tự tải trạng thái khi chọn ca;
+   không bấm **Tạo phiên mới** nếu chỉ muốn xem/chỉnh phiên đó.
 4. Sinh viên cùng Wi-Fi quét QR trên màn hình giảng viên.
 5. Sinh viên nhập MSSV, email và OTP đang hiển thị rồi xác nhận.
 6. Tên sinh viên xuất hiện ngay trên dashboard.
@@ -171,25 +172,35 @@ Nếu chỉ test trên cùng máy, có thể dùng `http://127.0.0.1:8080`. Khô
     bấm **Lưu điểm danh**; thay đổi được ghi vào Google Sheets của bài demo.
 12. Giữ desktop ở **Danh sách sinh viên**: sau khi bấm **Lưu điểm danh** trên web,
     trạng thái sẽ hiện trên desktop; đổi trạng thái trên desktop thì web cũng cập nhật
-    trong tối đa 2 giây.
+    trong tối đa 5 giây.
     Hai chiều vẫn đồng bộ sau khi đóng phiên, miễn là đang xem cùng một ca học.
 
 ## Google Sheets làm database chính
 
 1. Tạo một Google Sheet mới, mở **Extensions → Apps Script**.
 2. Trong ứng dụng, mở **Cấu hình Google Sheets** và sao chép đoạn Apps Script mẫu.
-3. Deploy script dưới dạng Web App, quyền truy cập phù hợp với môi trường demo.
+3. Deploy script dưới dạng Web App, quyền truy cập phù hợp với môi trường demo. Nếu đã
+   deploy bản cũ, chọn **Manage deployments → Edit → New version → Deploy** để cập nhật.
 4. Dán Web App URL vào ứng dụng và bấm **Kiểm tra & lưu**.
 5. Backend kiểm tra kết nối rồi lưu URL. Các thao tác import, mở/đóng phiên và
    check-in chỉ được xác nhận thành công sau khi ghi được Google Sheets.
 6. Apps Script tự tạo năm tab: `Rosters`, `Sessions`, `Attendance`,
    `DeviceBindings` và `AuditLog`.
-7. Khi cấu hình lần đầu, backend chuyển roster và phiên đang có trong SQLite cache
-   lên Google Sheets. Sau đó Sheet là nguồn roster được đọc lại khi chọn lớp.
-8. Để có dữ liệu ngay khi demo, bấm **Tạo dữ liệu demo**. Lệnh tạo 4 lớp,
-   32 sinh viên và các trạng thái điểm danh mẫu trong cả năm tab. Có thể chạy lại;
+7. Sau khi cấu hình, Sheet là nguồn duy nhất cho roster, phiên, điểm danh, thiết bị
+   và audit log. Desktop và cổng FAP mô phỏng đều đọc cùng nguồn này.
+8. Để có dữ liệu ngay khi demo, bấm **Tạo dữ liệu demo**. Lệnh tạo lịch tuần
+   21/09–27/09/2026 gồm 7 ca và một roster chung 35 sinh viên áp dụng cho 4 lớp.
+   HCM202 học Slot 1 vào Thứ 3 và Thứ 6.
+   Dữ liệu điểm danh mẫu được ghi trong cả năm tab. Có thể chạy lại;
    chỉ các dòng có khóa `DEMO-*` và roster `SE1917`–`SE1920` được thay thế.
 9. Mở `/fap-demo/` để xem dữ liệu cập nhật tự động hoặc chỉnh Present/Absent thủ công.
+
+Nếu kết nối tạm lỗi, FAP demo tự thử lại sau 5–60 giây và thử ngay khi quay lại
+tab; nút **Nạp lại** chỉ để yêu cầu kiểm tra tức thì. Khi mã Apps Script thay đổi,
+vẫn cần triển khai **New version** một lần để Google chạy mã mới.
+Sau khi một thay đổi được ghi thành công vào Sheet (kể cả đóng phiên trên desktop),
+máy chủ cũng đẩy bản cập nhật trực tiếp tới trang FAP đang mở; Google Sheets vẫn
+là nơi lưu dữ liệu duy nhất. Nếu luồng trực tiếp ngắt, trang tiếp tục tự đọc lại.
 
 Cổng mô phỏng không cho tự động tích khi nguồn báo phiên vẫn đang mở, nhằm tránh
 biến sinh viên chưa kịp check-in thành vắng. Với link CSV công khai, Google Sheets
@@ -239,16 +250,17 @@ lab1-prm/
 │   ├── screens/                 # Các màn hình chính
 │   ├── services/                # API, SignalR, OTP, tải file
 │   └── widgets/                 # QR, roster, audit log, Google Sheets
-├── docs/                        # Cổng web dành cho sinh viên
+├── student-portal/              # Cổng web dành cho sinh viên
 ├── fap-demo/                    # Cổng FAP mô phỏng độc lập cho giảng viên
 ├── server/                      # ASP.NET Core API
-│   ├── Data/                    # EF Core DbContext
 │   ├── Hubs/                    # SignalR hub
 │   ├── Models/
 │   └── Services/
 ├── test/                        # Flutter tests
+├── scripts/                     # PowerShell điều phối và đóng gói
 ├── run.cmd                      # Lệnh chạy nhanh trên Windows
-├── run.ps1                      # Script điều phối backend và Flutter
+├── run-public.cmd               # Chạy demo qua Cloudflare Quick Tunnel
+├── package-windows.cmd          # Tạo gói Windows
 └── pubspec.yaml
 ```
 
@@ -269,7 +281,7 @@ node --test test\fap_demo_web_test.cjs
 
 - `.dart_tool/`, `build/`, `coverage/`.
 - `server/bin/`, `server/obj/`.
-- `server/App_Data/`, cache SQLite và file cấu hình Web App URL.
+- `server/App_Data/` và file cấu hình Web App URL cục bộ.
 - `.env`, `appsettings.Development.json`.
 - cấu hình DevTools/Visual Studio và thư mục export/download thử nghiệm.
 

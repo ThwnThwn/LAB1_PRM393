@@ -45,12 +45,22 @@ void main() {
     await tester.tap(find.text('Bắt đầu điểm danh QR (10s OTP)'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('MSSV'), findsOneWidget);
+    expect(
+      find.text(
+        'Không tải được dữ liệu từ Google Sheets. Hãy kiểm tra kết nối rồi chọn lại ca.',
+      ),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Danh sách sinh viên'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('MSSV'), findsOneWidget);
+    expect(
+      find.text(
+        'Không tải được dữ liệu từ Google Sheets. Hãy kiểm tra kết nối rồi chọn lại ca.',
+      ),
+      findsOneWidget,
+    );
     expect(
       find.text(
         'Mở phiên điểm danh để chỉnh trạng thái và đồng bộ với cổng FAP mô phỏng.',
@@ -60,11 +70,7 @@ void main() {
     final statusControls = tester.widgetList<DropdownButton<AttendanceStatus>>(
       find.byType(DropdownButton<AttendanceStatus>),
     );
-    expect(statusControls, isNotEmpty);
-    expect(
-      statusControls.every((control) => control.onChanged == null),
-      isTrue,
-    );
+    expect(statusControls, isEmpty);
   });
 
   testWidgets('Class code filter keeps only the selected teaching group', (
@@ -78,6 +84,30 @@ void main() {
     await tester.pumpWidget(const FapAttendanceApp());
     expect(find.text('PRN232'), findsWidgets);
     expect(find.text('EXE201'), findsOneWidget);
+    expect(find.text('SWP391'), findsNothing);
+    expect(find.text('MLN111'), findsNothing);
+    expect(find.text('ITE302c'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('day-slot-2-1')),
+        matching: find.text('HCM202'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('day-slot-5-1')),
+        matching: find.text('HCM202'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('day-slot-1-4')),
+        matching: find.text('HCM202'),
+      ),
+      findsNothing,
+    );
 
     await tester.tap(find.byKey(const ValueKey('class-code-filter')));
     await tester.pumpAndSettle();

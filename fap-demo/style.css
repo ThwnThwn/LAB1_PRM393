@@ -263,6 +263,56 @@ h1 {
   gap: 10px;
 }
 
+.session-picker-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  padding: 14px 24px;
+  background: var(--surface-soft);
+  border-top: 1px solid var(--border);
+}
+
+.session-picker-field {
+  width: min(560px, 100%);
+  display: grid;
+  flex: 0 1 560px;
+  gap: 5px;
+}
+
+.session-picker-field > span {
+  color: #526076;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.session-picker-field select {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 38px 8px 12px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  font-weight: 650;
+}
+
+.session-picker-field select:hover:not(:disabled) {
+  border-color: #9eabba;
+}
+
+.session-picker-field select:disabled {
+  cursor: not-allowed;
+  color: #667085;
+  background: #eef2f6;
+}
+
+.session-picker-help {
+  max-width: 62ch;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .button {
   min-height: 42px;
   display: inline-flex;
@@ -320,7 +370,7 @@ h1 {
   display: grid;
   grid-template-columns: 1.2fr 1fr .65fr 1fr 1fr;
   margin: 0;
-  background: var(--surface-soft);
+  background: var(--surface);
   border-top: 1px solid var(--border);
 }
 
@@ -698,9 +748,20 @@ tbody tr:last-child td {
   }
 
   .session-heading,
+  .session-picker-bar,
   .table-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .session-picker-field {
+    width: 100%;
+    flex-basis: auto;
+  }
+
+  .session-picker-help {
+    max-width: none;
+    margin-bottom: 0;
   }
 
   .session-actions,
@@ -776,6 +837,11 @@ tbody tr:last-child td {
 
   .session-heading {
     padding: 18px 16px;
+  }
+
+  .session-picker-bar {
+    gap: 8px;
+    padding: 14px 16px;
   }
 
   h1 {

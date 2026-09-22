@@ -134,6 +134,29 @@ class AttendanceApiService {
     );
   }
 
+  Future<List<Map<String, dynamic>>> getSessions({
+    int limit = 100,
+    String? classCode,
+    String? subjectCode,
+    int? slot,
+  }) async {
+    final query = Uri(
+      queryParameters: {
+        'limit': '$limit',
+        if (classCode != null) 'classCode': classCode,
+        if (subjectCode != null) 'subjectCode': subjectCode,
+        if (slot != null) 'slot': '$slot',
+      },
+    ).query;
+    final payload = await _sendJson('GET', '/api/sessions?$query', null);
+    final sessions = payload['sessions'];
+    if (sessions is! List) return [];
+    return sessions
+        .whereType<Map>()
+        .map((session) => Map<String, dynamic>.from(session))
+        .toList();
+  }
+
   Future<List<Map<String, dynamic>>> getClassRoster(String classCode) async {
     final payload = await _sendJson(
       'GET',

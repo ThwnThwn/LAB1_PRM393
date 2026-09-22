@@ -2,11 +2,11 @@ using System.Net.Mail;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
-using Attendance.Api.Data;
+using System.Text.Json;
 using Attendance.Api.Hubs;
 using Attendance.Api.Models;
 using Attendance.Api.Services;
-using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.AspNetCore.HttpOverrides;
 
@@ -15,15 +15,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(builder.Configuration["Urls"] ?? "http://0.0.0.0:8080");
 
 var repositoryRoot = Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, ".."));
-var dataDirectory = Path.Combine(builder.Environment.ContentRootPath, "App_Data");
-Directory.CreateDirectory(dataDirectory);
-var databasePath = Path.Combine(dataDirectory, "attendance.db");
 
-builder.Services.AddDbContext<AttendanceDbContext>(options =>
-    options.UseSqlite($"Data Source={databasePath}"));
 builder.Services.AddScoped<AttendanceService>();
 builder.Services.AddHttpClient(nameof(GoogleSheetsPrimaryStore));
 builder.Services.AddSingleton<GoogleSheetsPrimaryStore>();
+builder.Services.AddSingleton<AttendanceUpdateStream>();
 builder.Services.AddSingleton<OtpService>();
 builder.Services.AddSingleton<DeviceIdentityService>();
 builder.Services.AddSignalR();
@@ -45,6 +41,17 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+app.UseExceptionHandler(errorApp => errorApp.Run(async context =>
+{
+    var error = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+    context.Response.StatusCode = StatusCodes.Status502BadGateway;
+    await context.Response.WriteAsJsonAsync(new
+    {
+        success = false,
+        code = "GOOGLE_SHEETS_READ_FAILED",
+        message = error?.Message ?? "Không thể đọc dữ liệu từ Google Sheets.",
+    });
+}));
 app.UseForwardedHeaders();
 app.UseCors();
 
@@ -113,47 +120,8 @@ app.Use(async (context, next) =>
     await next();
 });
 
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var database = scope.ServiceProvider.GetRequiredService<AttendanceDbContext>();
-    await database.Database.EnsureCreatedAsync();
-    await database.Database.ExecuteSqlRawAsync("""
-        CREATE TABLE IF NOT EXISTS "ClassRosterStudents" (
-            "Id" INTEGER NOT NULL CONSTRAINT "PK_ClassRosterStudents" PRIMARY KEY AUTOINCREMENT,
-            "ClassCode" TEXT NOT NULL,
-            "RollNo" TEXT NOT NULL,
-            "FullName" TEXT NOT NULL,
-            "Email" TEXT NOT NULL,
-            "UpdatedAtUtc" TEXT NOT NULL
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS "IX_ClassRosterStudents_ClassCode_RollNo"
-            ON "ClassRosterStudents" ("ClassCode", "RollNo");
-        CREATE TABLE IF NOT EXISTS "AttendanceDeviceBindings" (
-            "Id" INTEGER NOT NULL CONSTRAINT "PK_AttendanceDeviceBindings" PRIMARY KEY AUTOINCREMENT,
-            "SessionId" TEXT NOT NULL,
-            "DeviceHash" TEXT NOT NULL,
-            "RollNo" TEXT NOT NULL,
-            "FirstSeenUtc" TEXT NOT NULL,
-            "LastSeenUtc" TEXT NOT NULL,
-            "BlockedAttempts" INTEGER NOT NULL DEFAULT 0,
-            "LastBlockedRollNo" TEXT NOT NULL DEFAULT '',
-            "LastBlockedAtUtc" TEXT NULL,
-            "NetworkHash" TEXT NOT NULL DEFAULT '',
-            "UserAgentHash" TEXT NOT NULL DEFAULT '',
-            CONSTRAINT "FK_AttendanceDeviceBindings_Sessions_SessionId"
-                FOREIGN KEY ("SessionId") REFERENCES "Sessions" ("Id") ON DELETE CASCADE
-        );
-        CREATE UNIQUE INDEX IF NOT EXISTS "IX_AttendanceDeviceBindings_SessionId_DeviceHash"
-            ON "AttendanceDeviceBindings" ("SessionId", "DeviceHash");
-        CREATE INDEX IF NOT EXISTS "IX_AttendanceDeviceBindings_SessionId_NetworkHash"
-            ON "AttendanceDeviceBindings" ("SessionId", "NetworkHash");
-        CREATE INDEX IF NOT EXISTS "IX_AttendanceDeviceBindings_SessionId_BlockedAttempts"
-            ON "AttendanceDeviceBindings" ("SessionId", "BlockedAttempts");
-        """);
-}
-
 var flutterWebRoot = Path.Combine(repositoryRoot, "build", "web");
-var studentPortalRoot = Path.Combine(repositoryRoot, "docs");
+var studentPortalRoot = Path.Combine(repositoryRoot, "student-portal");
 var fapDemoRoot = Path.Combine(repositoryRoot, "fap-demo");
 
 if (Directory.Exists(studentPortalRoot))
@@ -193,7 +161,8 @@ app.MapGet("/api/health", async (
         status = "ok",
         service = "FAP Attendance ASP.NET Core API",
         database = "Google Sheets",
-        localCache = "SQLite",
+        localCache = "Không sử dụng",
+        runtimeState = "Chỉ OTP và SignalR trong RAM",
         googleSheetsConfigured = sheets.IsConfigured,
         realtime = "SignalR",
         utcTime = DateTime.UtcNow,
@@ -220,41 +189,9 @@ app.MapGet("/api/config/google-sheets", async (
 app.MapPut("/api/config/google-sheets", async (
     GoogleSheetsConfigurationRequest request,
     GoogleSheetsPrimaryStore sheetsStore,
-    AttendanceService service,
     CancellationToken cancellationToken) =>
 {
     var status = await sheetsStore.ConfigureAsync(request.WebAppUrl, cancellationToken);
-    if (status.IsConfigured && status.IsReachable)
-    {
-        var rosters = await service.GetAllClassRostersAsync(cancellationToken);
-        foreach (var roster in rosters)
-        {
-            var rosterWrite = await sheetsStore.SyncRosterAsync(
-                roster.Key,
-                roster.Value,
-                cancellationToken);
-            if (!rosterWrite.Success)
-            {
-                return GoogleSheetsWriteFailedResult(
-                    $"Đã lưu URL nhưng không thể chuyển roster cũ: {rosterWrite.Message}");
-            }
-        }
-
-        var sessions = await service.GetRecentSessionsAsync(100, cancellationToken);
-        foreach (var session in sessions)
-        {
-            var sessionWrite = await PersistSnapshotAsync(
-                session,
-                service,
-                sheetsStore,
-                cancellationToken);
-            if (!sessionWrite.Success)
-            {
-                return GoogleSheetsWriteFailedResult(
-                    $"Đã lưu URL nhưng không thể chuyển phiên cũ: {sessionWrite.Message}");
-            }
-        }
-    }
     return Results.Json(new
     {
         success = status.IsConfigured && status.IsReachable,
@@ -276,25 +213,6 @@ app.MapPost("/api/sessions", async (
 {
     if (!sheetsStore.IsConfigured) return GoogleSheetsRequiredResult();
     var result = await service.OpenSessionAsync(request, cancellationToken);
-    if (result.Value is not null)
-    {
-        var rosterWrite = await sheetsStore.SyncRosterAsync(
-            result.Value.ClassCode,
-            result.Value.Students
-                .Select(student => new RosterStudentRecord(
-                    student.RollNo,
-                    student.FullName,
-                    student.Email))
-                .ToArray(),
-            cancellationToken);
-        if (!rosterWrite.Success) return GoogleSheetsWriteFailedResult(rosterWrite.Message);
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -305,10 +223,18 @@ app.MapPost("/api/sessions", async (
 
 app.MapGet("/api/sessions", async (
     int? limit,
+    string? classCode,
+    string? subjectCode,
+    int? slot,
     AttendanceService service,
     CancellationToken cancellationToken) =>
 {
-    var sessions = await service.GetRecentSessionsAsync(limit ?? 20, cancellationToken);
+    var sessions = await service.GetRecentSessionsAsync(
+        limit ?? 20,
+        cancellationToken,
+        classCode,
+        subjectCode,
+        slot);
     return Results.Ok(new { success = true, count = sessions.Count, sessions });
 });
 
@@ -338,23 +264,6 @@ app.MapPut("/api/rosters/{classCode}", async (
 {
     if (!sheetsStore.IsConfigured) return GoogleSheetsRequiredResult();
     var result = await service.SyncRosterAsync(classCode, request, cancellationToken);
-    if (result.Success && result.Value is not null)
-    {
-        var rosterWrite = await sheetsStore.SyncRosterAsync(
-            result.Value.ClassCode,
-            result.Value.Students,
-            cancellationToken);
-        if (!rosterWrite.Success) return GoogleSheetsWriteFailedResult(rosterWrite.Message);
-        if (result.Value.Session is not null)
-        {
-            var sessionWrite = await PersistSnapshotAsync(
-                result.Value.Session,
-                service,
-                sheetsStore,
-                cancellationToken);
-            if (!sessionWrite.Success) return GoogleSheetsWriteFailedResult(sessionWrite.Message);
-        }
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -373,15 +282,6 @@ app.MapPost("/api/sessions/{sessionId}/close", async (
 {
     if (!sheetsStore.IsConfigured) return GoogleSheetsRequiredResult();
     var result = await service.CloseSessionAsync(sessionId, actor, cancellationToken);
-    if (result.Value is not null)
-    {
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -399,15 +299,6 @@ app.MapPost("/api/sessions/{sessionId}/otp/pause", async (
 {
     if (!sheetsStore.IsConfigured) return GoogleSheetsRequiredResult();
     var result = await service.PauseOtpAsync(sessionId, actor, cancellationToken);
-    if (result.Value is not null)
-    {
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -425,15 +316,6 @@ app.MapPost("/api/sessions/{sessionId}/otp/resume", async (
 {
     if (!sheetsStore.IsConfigured) return GoogleSheetsRequiredResult();
     var result = await service.ResumeOtpAsync(sessionId, actor, cancellationToken);
-    if (result.Value is not null)
-    {
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -469,6 +351,34 @@ app.MapGet("/api/attendance", async (
         : Results.Ok(snapshot);
 });
 
+app.MapGet("/api/updates", async (HttpContext context, AttendanceUpdateStream updates) =>
+{
+    var cancellationToken = context.RequestAborted;
+    context.Response.ContentType = "text/event-stream";
+    context.Response.Headers["Cache-Control"] = "no-cache, no-transform";
+    context.Response.Headers["X-Accel-Buffering"] = "no";
+    var subscription = updates.Subscribe();
+    try
+    {
+        await context.Response.WriteAsync("retry: 3000\n: connected\n\n", cancellationToken);
+        await context.Response.Body.FlushAsync(cancellationToken);
+        await foreach (var update in subscription.Reader.ReadAllAsync(cancellationToken))
+        {
+            var payload = JsonSerializer.Serialize(update, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            await context.Response.WriteAsync($"event: attendance\ndata: {payload}\n\n", cancellationToken);
+            await context.Response.Body.FlushAsync(cancellationToken);
+        }
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        // A closed browser tab ends the stream normally.
+    }
+    finally
+    {
+        updates.Unsubscribe(subscription.Id);
+    }
+});
+
 app.MapPost("/api/attendance", async (
     StudentCheckinRequest request,
     HttpContext httpContext,
@@ -497,15 +407,6 @@ app.MapPost("/api/attendance", async (
 
     var deviceIdentity = deviceIdentityService.GetOrCreate(httpContext);
     var result = await service.CheckinAsync(request, deviceIdentity, cancellationToken);
-    if (result.Value is not null)
-    {
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     var student = result.Value?.Students.FirstOrDefault(item =>
         item.RollNo.Equals(request.RollNo, StringComparison.OrdinalIgnoreCase));
     return Results.Json(new
@@ -532,15 +433,6 @@ app.MapPost("/api/sessions/{sessionId}/devices/{bindingId:long}/release", async 
         bindingId,
         request,
         cancellationToken);
-    if (result.Value is not null)
-    {
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -563,15 +455,6 @@ app.MapPatch("/api/sessions/{sessionId}/attendance/{rollNo}", async (
         rollNo,
         request,
         cancellationToken);
-    if (result.Value is not null)
-    {
-        var persisted = await PersistSnapshotAsync(
-            result.Value,
-            service,
-            sheetsStore,
-            cancellationToken);
-        if (!persisted.Success) return GoogleSheetsWriteFailedResult(persisted.Message);
-    }
     return Results.Json(new
     {
         success = result.Success,
@@ -610,9 +493,11 @@ app.MapPost("/api/google-sheets/seed-demo", async (
         ? Results.Ok(new
         {
             success = true,
-            message = "Đã seed 4 lớp, 32 sinh viên và các phiên mẫu vào Google Sheets.",
+            message = "Đã seed lịch tuần 21/09–27/09/2026, 4 lớp dùng chung roster 35 sinh viên và 7 ca học vào Google Sheets.",
             classCount = 4,
-            studentCount = 32,
+            studentCount = 35,
+            rosterRowCount = 140,
+            sessionCount = 7,
         })
         : GoogleSheetsWriteFailedResult(seeded.Message);
 });
@@ -634,14 +519,12 @@ app.MapPost("/api/google-sheets/sync/{sessionId}", async (
         });
     }
 
-    var persisted = await PersistSnapshotAsync(
-        snapshot,
-        service,
-        sheetsStore,
-        cancellationToken);
-    return persisted.Success
-        ? Results.Ok(new { success = true, message = persisted.Message, session = snapshot })
-        : GoogleSheetsWriteFailedResult(persisted.Message);
+    return Results.Ok(new
+    {
+        success = true,
+        message = "Phiên đã được đọc trực tiếp từ Google Sheets; không còn cache SQLite để đồng bộ.",
+        session = snapshot,
+    });
 });
 
 app.MapHub<AttendanceHub>("/hubs/attendance");
@@ -709,16 +592,6 @@ app.MapFallback(async context =>
 });
 
 app.Run();
-
-static async Task<GoogleSheetsWriteResult> PersistSnapshotAsync(
-    AttendanceSnapshot snapshot,
-    AttendanceService service,
-    GoogleSheetsPrimaryStore sheetsStore,
-    CancellationToken cancellationToken)
-{
-    var auditLogs = await service.GetAuditLogsAsync(snapshot.SessionId, cancellationToken);
-    return await sheetsStore.SyncSessionAsync(snapshot, auditLogs, cancellationToken);
-}
 
 static IResult GoogleSheetsRequiredResult() => Results.Json(new
 {

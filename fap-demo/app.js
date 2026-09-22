@@ -1,8 +1,10 @@
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 5000;
+const SESSION_LIST_POLL_INTERVAL_MS = 30000;
 
 // Public launcher uses the query token once to establish an HttpOnly teacher
 // cookie. Remove it from the address bar immediately after the page loads.
 const launchUrl = new URL(window.location.href);
+const initialSessionId = launchUrl.searchParams.get("sessionId") || "";
 if (launchUrl.searchParams.has("teacherToken")) {
   launchUrl.searchParams.delete("teacherToken");
   const cleanUrl = `${launchUrl.pathname}${launchUrl.search}${launchUrl.hash}`;
@@ -13,20 +15,33 @@ const API = {
   attendance: "/api/attendance",
   health: "/api/health",
   sheets: "/api/config/google-sheets",
+  sessions: "/api/sessions?limit=40",
+  updates: "/api/updates",
 };
 
 const state = {
   snapshot: null,
+  sessions: [],
+  selectedSessionId: initialSessionId,
+  sessionsLoading: true,
+  sessionsRefreshing: false,
+  sessionsError: "",
   drafts: new Map(),
   dirty: new Set(),
   baseStatuses: new Map(),
   query: "",
   filter: "ALL",
   loading: true,
+  refreshing: false,
   saving: false,
   connected: false,
   sheetsConfigured: false,
+  sheetsMessage: "",
   toastTimer: null,
+  retryDelayMs: 0,
+  nextRetryAt: 0,
+  liveUpdateSerial: 0,
+  liveSource: null,
 };
 
 const elements = {
@@ -41,6 +56,8 @@ const elements = {
   message: document.querySelector("#system-message"),
   lastUpdated: document.querySelector("#last-updated"),
   toast: document.querySelector("#toast"),
+  sessionPicker: document.querySelector("#session-picker"),
+  sessionPickerHelp: document.querySelector("#session-picker-help"),
 };
 
 function escapeHtml(value) {
@@ -142,24 +159,127 @@ async function readJson(response) {
   return body;
 }
 
+function attendanceEndpoint(sessionId) {
+  return sessionId
+    ? `${API.attendance}?sessionId=${encodeURIComponent(sessionId)}`
+    : API.attendance;
+}
+
+function sessionOptionLabel(session) {
+  const stateLabel = session.isOpen ? "Đang mở" : "Đã đóng";
+  return `${session.subjectCode || "Môn học"} · Slot ${session.slot ?? "—"} · ${formatSessionDate(session.date)} · ${stateLabel}`;
+}
+
+function updateSessionUrl() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("teacherToken");
+  if (state.selectedSessionId) {
+    url.searchParams.set("sessionId", state.selectedSessionId);
+  } else {
+    url.searchParams.delete("sessionId");
+  }
+  window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+}
+
+function renderSessionPicker() {
+  if (!elements.sessionPicker) return;
+
+  const groups = new Map();
+  for (const session of state.sessions) {
+    const classCode = session.classCode || "Chưa xác định lớp";
+    if (!groups.has(classCode)) groups.set(classCode, []);
+    groups.get(classCode).push(session);
+  }
+
+  const latest = state.sessions[0];
+  const automaticLabel = latest
+    ? `Ca mới nhất (tự động) — ${latest.classCode || "Lớp học"} · Slot ${latest.slot ?? "—"}`
+    : "Ca mới nhất (tự động)";
+  const groupedOptions = [...groups.entries()].map(([classCode, sessions]) => `
+    <optgroup label="${escapeHtml(classCode)}">
+      ${sessions.map((session) => `
+        <option value="${escapeHtml(session.sessionId)}">${escapeHtml(sessionOptionLabel(session))}</option>
+      `).join("")}
+    </optgroup>
+  `).join("");
+  const optionsSignature = state.sessions
+    .map((session) => [session.sessionId, session.classCode, session.subjectCode, session.slot, session.date, session.isOpen].join("|"))
+    .join(";");
+  if (elements.sessionPicker.dataset.optionsSignature !== optionsSignature) {
+    elements.sessionPicker.innerHTML = `
+      <option value="">${escapeHtml(automaticLabel)}</option>
+      ${groupedOptions}
+    `;
+    elements.sessionPicker.dataset.optionsSignature = optionsSignature;
+  }
+  if (elements.sessionPicker.value !== state.selectedSessionId) {
+    elements.sessionPicker.value = state.selectedSessionId;
+  }
+
+  const hasUnsavedChanges = state.dirty.size > 0;
+  elements.sessionPicker.disabled = state.sessionsLoading || state.saving || hasUnsavedChanges || state.sessions.length === 0;
+  if (state.sessionsError) {
+    elements.sessionPickerHelp.textContent = `Không tải được danh sách lớp: ${state.sessionsError}`;
+  } else if (hasUnsavedChanges) {
+    elements.sessionPickerHelp.textContent = `Hãy lưu hoặc hoàn tác ${state.dirty.size} thay đổi trước khi chuyển lớp.`;
+  } else if (state.selectedSessionId) {
+    elements.sessionPickerHelp.textContent = "Đang xem cố định phiên đã chọn. Chọn “Ca mới nhất” để tự động theo phiên vừa mở trên desktop.";
+  } else {
+    elements.sessionPickerHelp.textContent = "Đang tự động theo ca mới nhất. Mở danh sách để chọn một lớp, ngày và slot cụ thể.";
+  }
+}
+
+async function loadSessions({ manual = false } = {}) {
+  if (state.sessionsRefreshing) return;
+  state.sessionsRefreshing = true;
+  if (state.sessions.length === 0) state.sessionsLoading = true;
+  try {
+    const response = await fetch(API.sessions, { cache: "no-store" });
+    const body = await readJson(response);
+    state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    if (state.snapshot?.sessionId) upsertSessionSummary(state.snapshot);
+    state.sessionsError = "";
+  } catch (error) {
+    state.sessionsError = error.message;
+    if (manual) showToast(`Không thể nạp danh sách lớp: ${error.message}`, true);
+  } finally {
+    state.sessionsRefreshing = false;
+    state.sessionsLoading = false;
+    renderSessionPicker();
+  }
+}
+
 async function loadServiceStatus() {
   try {
     const [healthResponse, sheetsResponse] = await Promise.all([
       fetch(API.health, { cache: "no-store" }),
-      fetch(`${API.sheets}?verify=false`, { cache: "no-store" }),
+      fetch(`${API.sheets}?verify=true`, { cache: "no-store" }),
     ]);
     const health = await readJson(healthResponse);
     const sheets = await readJson(sheetsResponse);
-    state.sheetsConfigured = Boolean(sheets.isConfigured && health.googleSheetsConfigured);
+    state.sheetsConfigured = Boolean(
+      sheets.isConfigured && sheets.isReachable && health.googleSheetsConfigured,
+    );
+    state.sheetsMessage = sheets.message || "";
     if (!state.sheetsConfigured) {
-      showSystemMessage("Google Sheets chưa được cấu hình. Hãy mở desktop app → Cấu hình Google Sheets để bật lưu điểm danh.");
+      showSystemMessage(
+        sheets.message || "Google Sheets chưa được cấu hình. Hãy mở desktop app → Cấu hình Google Sheets để bật lưu điểm danh.",
+      );
     } else {
       showSystemMessage("");
     }
   } catch (error) {
     state.sheetsConfigured = false;
+    state.sheetsMessage = error.message;
     showSystemMessage(`Không đọc được trạng thái Google Sheets: ${error.message}`);
   }
+}
+
+function upsertSessionSummary(snapshot) {
+  if (!snapshot?.sessionId) return;
+  const index = state.sessions.findIndex((session) => session.sessionId === snapshot.sessionId);
+  if (index < 0) state.sessions.unshift(snapshot);
+  else state.sessions[index] = { ...state.sessions[index], ...snapshot };
 }
 
 function mergeSnapshot(snapshot, force) {
@@ -172,6 +292,7 @@ function mergeSnapshot(snapshot, force) {
   }
 
   state.snapshot = snapshot;
+  upsertSessionSummary(snapshot);
   let conflictingRows = 0;
   for (const student of snapshot.students || []) {
     if (state.dirty.has(student.rollNo) &&
@@ -190,31 +311,55 @@ function mergeSnapshot(snapshot, force) {
   }
 }
 
+function applySuccessfulSnapshot(snapshot, force, source = "poll") {
+  mergeSnapshot(snapshot, force);
+  state.loading = false;
+  state.sheetsConfigured = true;
+  state.sheetsMessage = "";
+  state.retryDelayMs = 0;
+  state.nextRetryAt = 0;
+  showSystemMessage("");
+  setConnection("online", "Google Sheets đã kết nối");
+  render();
+  const now = new Intl.DateTimeFormat("vi-VN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date());
+  elements.lastUpdated.textContent = source === "live"
+    ? `Cập nhật trực tiếp lúc ${now} · đã ghi Google Sheets`
+    : `Cập nhật lúc ${now} · tự động mỗi 5 giây`;
+}
+
 async function refreshData({ manual = false, force = false } = {}) {
-  if (state.saving) return;
+  if (state.saving || state.refreshing) return;
+  if (!manual && !force && Date.now() < state.nextRetryAt) return;
+  state.refreshing = true;
+  const liveSerialAtStart = state.liveUpdateSerial;
   if (manual) elements.refreshButton.disabled = true;
 
   try {
-    const response = await fetch(API.attendance, { cache: "no-store" });
+    const response = await fetch(attendanceEndpoint(state.selectedSessionId), { cache: "no-store" });
     const snapshot = await readJson(response);
-    mergeSnapshot(snapshot, force);
-    state.loading = false;
-    setConnection("online", state.sheetsConfigured ? "Google Sheets đã kết nối" : "Máy chủ đang hoạt động");
-    render();
-    const now = new Intl.DateTimeFormat("vi-VN", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    }).format(new Date());
-    elements.lastUpdated.textContent = `Cập nhật lúc ${now} · tự động mỗi 2 giây`;
+    if (liveSerialAtStart !== state.liveUpdateSerial) return;
+    applySuccessfulSnapshot(snapshot, force);
     if (manual) showToast("Đã nạp dữ liệu mới nhất.");
   } catch (error) {
+    if (liveSerialAtStart !== state.liveUpdateSerial) return;
     state.loading = false;
-    setConnection("error", "Mất kết nối máy chủ");
-    showSystemMessage(`Không thể tải danh sách điểm danh: ${error.message}`);
+    state.sheetsConfigured = false;
+    state.retryDelayMs = state.retryDelayMs
+      ? Math.min(state.retryDelayMs * 2, 60000)
+      : POLL_INTERVAL_MS;
+    state.nextRetryAt = Date.now() + state.retryDelayMs;
+    const detail = error.message;
+    const needsScriptUpdate = /Apps Script.*(bản cũ|phiên bản 4|cập nhật)/i.test(detail);
+    setConnection("error", needsScriptUpdate ? "Apps Script cần cập nhật" : "Đang tự kết nối lại");
+    showSystemMessage(`Chưa tải được điểm danh: ${detail} Trang sẽ tự thử lại, không cần bấm Nạp lại.`);
     render();
   } finally {
+    state.refreshing = false;
     elements.refreshButton.disabled = false;
   }
 }
@@ -228,7 +373,9 @@ function renderSession() {
   setText("#session-date", hasSession ? formatSessionDate(snapshot.date) : "—");
 
   const sessionStatus = document.querySelector("#session-status");
-  sessionStatus.textContent = hasSession ? (snapshot.isOpen ? "Đang mở" : "Đã đóng") : "Chưa có ca học";
+  sessionStatus.textContent = hasSession
+    ? (snapshot.isOpen ? "Đang mở" : "Đã đóng")
+    : (state.loading ? "Đang tải" : (state.connected ? "Chưa có ca học" : "Đang kết nối lại"));
   sessionStatus.className = `status-chip ${hasSession ? (snapshot.isOpen ? "open" : "closed") : "neutral"}`;
 
   setText(
@@ -265,7 +412,9 @@ function renderRows() {
 
   const students = filteredStudents();
   if (!state.snapshot?.sessionId) {
-    elements.rows.innerHTML = '<tr class="empty-row"><td colspan="9">Chưa có ca học. Hãy mở phiên điểm danh trên desktop app.</td></tr>';
+    elements.rows.innerHTML = state.connected
+      ? '<tr class="empty-row"><td colspan="9">Chưa có ca học. Hãy mở phiên điểm danh trên desktop app.</td></tr>'
+      : '<tr class="empty-row"><td colspan="9">Chưa tải được dữ liệu. Trang sẽ tự kết nối lại.</td></tr>';
     return;
   }
   if (students.length === 0) {
@@ -309,6 +458,7 @@ function renderActions() {
 }
 
 function render() {
+  renderSessionPicker();
   renderSession();
   renderRows();
   renderActions();
@@ -378,19 +528,70 @@ elements.filter.addEventListener("change", () => {
   renderRows();
 });
 
-elements.refreshButton.addEventListener("click", () => refreshData({ manual: true, force: state.dirty.size === 0 }));
+elements.sessionPicker.addEventListener("change", async () => {
+  if (state.dirty.size > 0) {
+    elements.sessionPicker.value = state.selectedSessionId;
+    showToast("Hãy lưu hoặc hoàn tác thay đổi trước khi chuyển lớp.", true);
+    return;
+  }
+
+  state.selectedSessionId = elements.sessionPicker.value;
+  state.snapshot = null;
+  state.drafts.clear();
+  state.baseStatuses.clear();
+  state.loading = true;
+  updateSessionUrl();
+  render();
+  await refreshData({ force: true });
+  showToast(state.selectedSessionId ? "Đã chuyển sang lớp và ca học đã chọn." : "Đã chuyển về ca học mới nhất.");
+});
+
+elements.refreshButton.addEventListener("click", async () => {
+  await refreshData({ manual: true, force: state.dirty.size === 0 });
+  await loadServiceStatus();
+  await loadSessions({ manual: true });
+});
 elements.saveButton.addEventListener("click", saveChanges);
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshData();
+  if (!document.hidden) {
+    refreshData({ force: true });
+    loadSessions();
+  }
 });
 
+function connectLiveUpdates() {
+  if (!window.EventSource) return;
+  const source = new window.EventSource(API.updates);
+  state.liveSource = source;
+  source.addEventListener("attendance", (event) => {
+    try {
+      const update = JSON.parse(event.data);
+      const snapshot = update.snapshot;
+      if (!snapshot?.sessionId) return;
+      if (state.selectedSessionId && snapshot.sessionId !== state.selectedSessionId) return;
+      if (!state.selectedSessionId &&
+          state.snapshot?.sessionId !== snapshot.sessionId &&
+          update.eventName !== "SessionOpened") return;
+      state.liveUpdateSerial += 1;
+      applySuccessfulSnapshot(snapshot, false, "live");
+    } catch (error) {
+      console.warn("Không đọc được cập nhật trực tiếp; tự nạp lại vẫn hoạt động.", error);
+    }
+  });
+}
+
 async function initialize() {
-  await loadServiceStatus();
-  await refreshData({ force: true });
+  connectLiveUpdates();
   window.setInterval(() => {
     if (!document.hidden) refreshData();
   }, POLL_INTERVAL_MS);
+  window.setInterval(() => {
+    if (!document.hidden) loadSessions();
+  }, SESSION_LIST_POLL_INTERVAL_MS);
+  await refreshData({ force: true });
+  await loadServiceStatus();
+  await loadSessions();
 }
 
 initialize();
