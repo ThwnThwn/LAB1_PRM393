@@ -615,6 +615,132 @@ public sealed class AttendanceService(
         }
     }
 
+    /// <summary>
+    /// Applies a teacher's draft in one Google Sheets write. A slot without a
+    /// session gets a closed session so manual attendance does not start QR/OTP.
+    /// </summary>
+    public async Task<ServiceResult<AttendanceSnapshot>> SaveAttendanceBatchAsync(
+        SaveAttendanceBatchRequest request,
+        CancellationToken cancellationToken)
+    {
+        var classCode = request.ClassCode?.Trim().ToUpperInvariant() ?? string.Empty;
+        var subjectCode = request.SubjectCode?.Trim().ToUpperInvariant() ?? string.Empty;
+        if (classCode.Length == 0 || subjectCode.Length == 0 || request.Slot is < 1 or > 8 ||
+            !DateOnly.TryParseExact(request.Date, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var date))
+        {
+            return Failure<AttendanceSnapshot>("Thông tin lớp, môn học, slot hoặc ngày học không hợp lệ.");
+        }
+
+        var changes = request.Changes?.ToArray() ?? [];
+        if (changes.Length is < 1 or > 200 || changes.Any(change =>
+                string.IsNullOrWhiteSpace(change.RollNo) ||
+                !AttendanceStatuses.All.Contains(change.Status?.Trim() ?? string.Empty) ||
+                !AttendanceStatuses.All.Contains(change.ExpectedStatus?.Trim() ?? string.Empty)) ||
+            changes.Select(change => change.RollNo!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Count() != changes.Length)
+        {
+            return Failure<AttendanceSnapshot>("Danh sách thay đổi không hợp lệ hoặc bị trùng MSSV.");
+        }
+
+        var requestedSessionId = request.SessionId?.Trim();
+        var gateKey = requestedSessionId is { Length: > 0 }
+            ? requestedSessionId
+            : $"draft:{classCode}:{subjectCode}:{request.Slot}:{date:yyyy-MM-dd}";
+        var gate = GetSessionLock(gateKey);
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            StoredAttendanceSession? stored;
+            if (requestedSessionId is { Length: > 0 })
+            {
+                var load = await sheetsStore.GetSessionAsync(requestedSessionId, cancellationToken);
+                if (!load.Result.Success) return StoreFailure<AttendanceSnapshot>(load.Result.Message);
+                if (load.Session is null)
+                    return Failure<AttendanceSnapshot>("Không tìm thấy phiên điểm danh.", StatusCodes.Status404NotFound);
+                stored = load.Session;
+            }
+            else
+            {
+                var list = await sheetsStore.GetSessionsAsync(100, cancellationToken, classCode, subjectCode, request.Slot);
+                if (!list.Result.Success) return StoreFailure<AttendanceSnapshot>(list.Result.Message);
+                if (list.Sessions.Any(item => SameVietnamCalendarDate(item.Snapshot.Date, date)))
+                {
+                    return Failure<AttendanceSnapshot>(
+                        "Ca học đã có phiên trên Google Sheets. Hãy chọn lại ca để nạp dữ liệu mới trước khi lưu.",
+                        StatusCodes.Status409Conflict);
+                }
+
+                var (rosterResult, roster) = await sheetsStore.GetRosterAsync(classCode, cancellationToken);
+                if (!rosterResult.Success) return StoreFailure<AttendanceSnapshot>(rosterResult.Message);
+                if (roster.Count == 0)
+                    return Failure<AttendanceSnapshot>("Lớp chưa có sinh viên trên Google Sheets.");
+                var now = DateTime.UtcNow;
+                var sessionId = Guid.NewGuid().ToString("N");
+                var records = roster.Select(student => new AttendanceRecord(
+                    sessionId, student.RollNo, student.FullName, student.Email,
+                    classCode, subjectCode, request.Slot, AttendanceStatuses.NotChecked,
+                    null, string.Empty, string.Empty)).ToArray();
+                var initial = RebuildSnapshot(new AttendanceSnapshot(
+                    "success", sessionId, classCode, subjectCode, request.Slot,
+                    date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    false, now, now, 10, false, null, null,
+                    records.Length, new DashboardStats(0, 0, 0, 0, 0, 0), records, []), []);
+                stored = new StoredAttendanceSession(initial, [], []);
+            }
+
+            var current = stored.Snapshot;
+            if (!current.ClassCode.Equals(classCode, StringComparison.OrdinalIgnoreCase) ||
+                !current.SubjectCode.Equals(subjectCode, StringComparison.OrdinalIgnoreCase) ||
+                current.Slot != request.Slot || !SameVietnamCalendarDate(current.Date, date))
+            {
+                return Failure<AttendanceSnapshot>("Phiên không khớp với ca học đã chọn.", StatusCodes.Status409Conflict);
+            }
+            if (current.IsOpen)
+                return Failure<AttendanceSnapshot>("Phiên đang mở. Hãy nạp lại trước khi sửa hàng loạt.", StatusCodes.Status409Conflict);
+
+            var recordsToSave = current.Students.ToArray();
+            var audits = stored.AuditLogs.ToList();
+            foreach (var change in changes)
+            {
+                var rollNo = change.RollNo!.Trim().ToUpperInvariant();
+                var index = Array.FindIndex(recordsToSave, student =>
+                    student.RollNo.Equals(rollNo, StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                    return Failure<AttendanceSnapshot>($"Không tìm thấy sinh viên {rollNo} trong lớp.", StatusCodes.Status409Conflict);
+                var previous = recordsToSave[index];
+                if (!previous.Status.Equals(change.ExpectedStatus!.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return Failure<AttendanceSnapshot>(
+                        $"Trạng thái của {rollNo} đã đổi trên Google Sheets. Hãy kiểm tra lại trước khi lưu.",
+                        StatusCodes.Status409Conflict);
+                }
+                var status = change.Status!.Trim().ToUpperInvariant();
+                if (previous.Status.Equals(status, StringComparison.OrdinalIgnoreCase)) continue;
+                recordsToSave[index] = previous with
+                {
+                    Status = status,
+                    CheckinTime = status is AttendanceStatuses.Present or AttendanceStatuses.Late
+                        ? previous.CheckinTime ?? DateTime.UtcNow : null,
+                    Notes = "Giảng viên cập nhật thủ công (lưu hàng loạt)",
+                };
+                audits.Add(CreateAudit(current.SessionId, rollNo, "MANUAL_UPDATE",
+                    previous.Status, status, CleanActor(request.Actor), "Lưu hàng loạt từ desktop"));
+            }
+
+            var snapshot = RebuildSnapshot(current with { Students = recordsToSave }, stored.DeviceBindings);
+            var save = await sheetsStore.SaveSessionAsync(
+                new StoredAttendanceSession(snapshot, audits, stored.DeviceBindings), cancellationToken);
+            if (!save.Success) return StoreFailure<AttendanceSnapshot>(save.Message);
+            await BroadcastAsync(snapshot.SessionId, "AttendanceUpdated", snapshot, cancellationToken);
+            return new ServiceResult<AttendanceSnapshot>(true,
+                $"Đã lưu {changes.Length} thay đổi lên Google Sheets.", snapshot);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     public async Task<AttendanceSnapshot?> GetSnapshotAsync(
         string? sessionId,
         CancellationToken cancellationToken)
@@ -906,6 +1032,16 @@ public sealed class AttendanceService(
         DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed)
             ? parsed.ToString("yyyy-MM-dd")
             : fallback.ToString("yyyy-MM-dd");
+
+    private static bool SameVietnamCalendarDate(string? value, DateOnly date)
+    {
+        if (DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var plainDate))
+            return plainDate == date;
+        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal, out var instant) &&
+               DateOnly.FromDateTime(instant.ToOffset(TimeSpan.FromHours(7)).DateTime) == date;
+    }
 
     private static string CleanActor(string? actor) =>
         string.IsNullOrWhiteSpace(actor) ? "Giảng viên" : actor.Trim();

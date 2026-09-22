@@ -264,18 +264,22 @@ h1 {
 }
 
 .session-picker-bar {
-  display: flex;
-  align-items: flex-end;
-  gap: 18px;
+  display: grid;
+  gap: 7px;
   padding: 14px 24px;
   background: var(--surface-soft);
   border-top: 1px solid var(--border);
 }
 
-.session-picker-field {
-  width: min(560px, 100%);
+.session-picker-fields {
   display: grid;
-  flex: 0 1 560px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.session-picker-field {
+  display: grid;
+  min-width: 0;
   gap: 5px;
 }
 
@@ -287,7 +291,7 @@ h1 {
 
 .session-picker-field select {
   width: 100%;
-  min-height: 42px;
+  min-height: 44px;
   padding: 8px 38px 8px 12px;
   color: var(--text);
   background: var(--surface);
@@ -307,8 +311,7 @@ h1 {
 }
 
 .session-picker-help {
-  max-width: 62ch;
-  margin: 0 0 10px;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
 }
@@ -748,15 +751,13 @@ tbody tr:last-child td {
   }
 
   .session-heading,
-  .session-picker-bar,
   .table-toolbar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .session-picker-field {
-    width: 100%;
-    flex-basis: auto;
+  .session-picker-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .session-picker-help {
@@ -842,6 +843,10 @@ tbody tr:last-child td {
   .session-picker-bar {
     gap: 8px;
     padding: 14px 16px;
+  }
+
+  .session-picker-fields {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   h1 {

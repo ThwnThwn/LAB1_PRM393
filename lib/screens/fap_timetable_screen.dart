@@ -451,8 +451,6 @@ class FapTimetableScreen extends StatelessWidget {
     final date = provider.getDateForDay(dayOfWeek);
     final isToday =
         date.year == now.year && date.month == now.month && date.day == now.day;
-    final isSelectedDay = provider.selectedSlot?.dayOfWeek == dayOfWeek;
-    final isHighlighted = isToday || isSelectedDay;
     final dayName = FapClassSlot.getDayName(dayOfWeek);
     final dayShort = FapClassSlot.getDayShortName(dayOfWeek);
     final formattedDate =
@@ -466,15 +464,15 @@ class FapTimetableScreen extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 2),
         child: Container(
           decoration: BoxDecoration(
-            color: isHighlighted
+            color: isToday
                 ? _fptOrange.withValues(alpha: 0.08)
                 : colorScheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: isHighlighted
+              color: isToday
                   ? _fptOrange
                   : colorScheme.outlineVariant.withValues(alpha: 0.35),
-              width: isHighlighted ? 1.5 : 1.0,
+              width: isToday ? 1.5 : 1.0,
             ),
           ),
           child: Column(
@@ -488,7 +486,7 @@ class FapTimetableScreen extends StatelessWidget {
                     style: TextStyle(
                       fontWeight: FontWeight.w800,
                       fontSize: 13.5,
-                      color: isHighlighted ? _fptOrange : colorScheme.onSurface,
+                      color: isToday ? _fptOrange : colorScheme.onSurface,
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -497,7 +495,7 @@ class FapTimetableScreen extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w500,
-                      color: isHighlighted
+                      color: isToday
                           ? _fptOrange.withValues(alpha: 0.85)
                           : colorScheme.onSurfaceVariant,
                     ),
@@ -517,25 +515,6 @@ class FapTimetableScreen extends StatelessWidget {
                   ),
                   child: Text(
                     '$formattedDate • Hôm nay',
-                    style: const TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white,
-                    ),
-                  ),
-                )
-              else if (isSelectedDay)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _fptOrange,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    formattedDate,
                     style: const TextStyle(
                       fontSize: 10.5,
                       fontWeight: FontWeight.w700,

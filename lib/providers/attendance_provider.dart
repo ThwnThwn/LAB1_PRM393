@@ -31,6 +31,10 @@ class AttendanceProvider extends ChangeNotifier {
   bool _sheetsConfigurationInProgress = false;
   bool _demoSeedInProgress = false;
   final Set<String> _pendingAttendanceRollNos = {};
+  final Map<String, _AttendanceDraft> _attendanceDrafts = {};
+  final Map<String, Student> _latestServerStudents = {};
+  bool _savingAttendanceDraft = false;
+  int _draftSaveGeneration = 0;
   bool _sheetsReachable = false;
   String? _sheetsConfigurationMessage;
 
@@ -95,6 +99,19 @@ class AttendanceProvider extends ChangeNotifier {
   String? get serverSessionId => _currentSession.serverSessionId;
   bool isStatusUpdatePending(String rollNo) =>
       _pendingAttendanceRollNos.contains(rollNo);
+  bool get hasUnsavedAttendanceChanges => _attendanceDrafts.isNotEmpty;
+  int get unsavedAttendanceCount => _attendanceDrafts.length;
+  bool get savingAttendanceDraft => _savingAttendanceDraft;
+  bool isAttendanceDrafted(String rollNo) =>
+      _attendanceDrafts.containsKey(rollNo);
+  bool isAttendanceDraftConflicted(String rollNo) {
+    final draft = _attendanceDrafts[rollNo];
+    final remote = _latestServerStudents[rollNo];
+    return draft != null &&
+        remote != null &&
+        remote.status != draft.originalStatus;
+  }
+
   List<Map<String, dynamic>> get auditLogs => List.unmodifiable(_auditLogs);
   List<Map<String, dynamic>> get deviceConflicts => _deviceBindings
       .where((binding) => (binding['blockedAttempts'] as num? ?? 0) > 0)
@@ -139,23 +156,35 @@ class AttendanceProvider extends ChangeNotifier {
   }
 
   void previousWeek() {
+    if (!_canChangeWeek()) return;
     _currentWeekStart = _currentWeekStart.subtract(const Duration(days: 7));
     notifyListeners();
   }
 
   void nextWeek() {
+    if (!_canChangeWeek()) return;
     _currentWeekStart = _currentWeekStart.add(const Duration(days: 7));
     notifyListeners();
   }
 
   void goToCurrentWeek() {
+    if (!_canChangeWeek()) return;
     _currentWeekStart = _getWeekStart(DateTime.now());
     notifyListeners();
   }
 
   void goToDate(DateTime date) {
+    if (!_canChangeWeek()) return;
     _currentWeekStart = _getWeekStart(date);
     notifyListeners();
+  }
+
+  bool _canChangeWeek() {
+    if (!hasUnsavedAttendanceChanges && !_savingAttendanceDraft) return true;
+    _lastCheckinNotification =
+        '⚠️ Hãy lưu hoặc hủy bản nháp điểm danh trước khi đổi tuần.';
+    notifyListeners();
+    return false;
   }
 
   /// Get slots for a specific day column and slot row in the timetable
@@ -173,6 +202,9 @@ class AttendanceProvider extends ChangeNotifier {
 
   void setClassCodeFilter(String? classCode) {
     final normalized = classCode?.trim().toUpperCase();
+    final nextFilter = normalized == null || normalized.isEmpty
+        ? null
+        : normalized;
     if (_currentSession.isOpen &&
         normalized != null &&
         normalized.isNotEmpty &&
@@ -182,9 +214,16 @@ class AttendanceProvider extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    _classCodeFilter = normalized == null || normalized.isEmpty
-        ? null
-        : normalized;
+    if (hasUnsavedAttendanceChanges &&
+        nextFilter != null &&
+        _selectedSlot != null &&
+        _selectedSlot!.classCode.toUpperCase() != nextFilter) {
+      _lastCheckinNotification =
+          '⚠️ Còn $unsavedAttendanceCount dòng chưa lưu. Hãy lưu hoặc hủy bản nháp trước khi đổi lớp.';
+      notifyListeners();
+      return;
+    }
+    _classCodeFilter = nextFilter;
     if (!_currentSession.isOpen &&
         _classCodeFilter != null &&
         _selectedSlot != null &&
@@ -193,6 +232,7 @@ class AttendanceProvider extends ChangeNotifier {
       unawaited(_liveService.disconnect());
       _selectedSlot = null;
       _students = [];
+      _latestServerStudents.clear();
       _currentSession = AttendanceSession(
         classCode: '',
         subjectCode: '',
@@ -259,6 +299,12 @@ class AttendanceProvider extends ChangeNotifier {
 
   Future<bool> openAttendanceSession() async {
     if (_sessionOperationInProgress) return false;
+    if (hasUnsavedAttendanceChanges || _savingAttendanceDraft) {
+      _lastCheckinNotification =
+          '⚠️ Hãy lưu hoặc hủy các dòng đã sửa trước khi tạo phiên mới.';
+      notifyListeners();
+      return false;
+    }
     await _rosterLoadFuture;
     if (_students.isEmpty) {
       _lastCheckinNotification =
@@ -397,12 +443,19 @@ class AttendanceProvider extends ChangeNotifier {
 
   Future<void> refreshSessionDashboard() async {
     final sessionId = _currentSession.serverSessionId;
-    if (sessionId == null || _refreshingDashboard) return;
+    if (sessionId == null || _refreshingDashboard || _savingAttendanceDraft) {
+      return;
+    }
 
     _refreshingDashboard = true;
+    final saveGeneration = _draftSaveGeneration;
     try {
       final snapshot = await _attendanceApi.getSession(sessionId);
-      if (_currentSession.serverSessionId != sessionId) return;
+      if (_currentSession.serverSessionId != sessionId ||
+          _savingAttendanceDraft ||
+          saveGeneration != _draftSaveGeneration) {
+        return;
+      }
       _applyServerSnapshot(snapshot);
     } catch (error) {
       debugPrint('Dashboard refresh failed: $error');
@@ -551,6 +604,35 @@ class AttendanceProvider extends ChangeNotifier {
           })
           .where((student) => student.rollNo.isNotEmpty)
           .toList();
+      _latestServerStudents
+        ..clear()
+        ..addEntries(
+          _students.map(
+            (student) => MapEntry(
+              student.rollNo,
+              Student(
+                rollNo: student.rollNo,
+                fullName: student.fullName,
+                email: student.email,
+                group: student.group,
+                status: student.status,
+                checkinTime: student.checkinTime,
+                notes: student.notes,
+              ),
+            ),
+          ),
+        );
+      for (final student in _students) {
+        final draft = _attendanceDrafts[student.rollNo];
+        if (draft != null) {
+          if (student.status == draft.status) {
+            _attendanceDrafts.remove(student.rollNo);
+            continue;
+          }
+          student.status = draft.status;
+          student.checkinTime = draft.checkinTime;
+        }
+      }
       _classRosters[_currentSession.classCode] = _students;
     }
 
@@ -580,6 +662,17 @@ class AttendanceProvider extends ChangeNotifier {
   /// Select a timetable slot without opening or closing an attendance session.
   /// Returns false when another session is currently open.
   bool selectTimetableSlot(FapClassSlot slot) {
+    if ((_selectedSlot?.id != slot.id ||
+            !DateUtils.isSameDay(
+              _currentSession.date,
+              getDateForDay(slot.dayOfWeek),
+            )) &&
+        (hasUnsavedAttendanceChanges || _savingAttendanceDraft)) {
+      _lastCheckinNotification =
+          '⚠️ Còn $unsavedAttendanceCount dòng chưa lưu. Hãy lưu hoặc hủy bản nháp trước khi đổi ca.';
+      notifyListeners();
+      return false;
+    }
     if (_currentSession.isOpen && _selectedSlot?.id != slot.id) {
       _lastCheckinNotification =
           'Hãy đóng phiên ${_currentSession.subjectCode} - ${_currentSession.classCode} trước khi chọn ca khác.';
@@ -600,6 +693,7 @@ class AttendanceProvider extends ChangeNotifier {
     _dashboardPollTimer?.cancel();
     unawaited(_liveService.disconnect());
     _selectedSlot = slot;
+    _latestServerStudents.clear();
     _otpRotationPaused = false;
     _deviceBindings = [];
     _currentSession = AttendanceSession(
@@ -674,6 +768,21 @@ class AttendanceProvider extends ChangeNotifier {
           .toList();
       _classRosters[classCode] = students;
       _students = students;
+      _latestServerStudents
+        ..clear()
+        ..addEntries(
+          students.map(
+            (student) => MapEntry(
+              student.rollNo,
+              Student(
+                rollNo: student.rollNo,
+                fullName: student.fullName,
+                email: student.email,
+                group: student.group,
+              ),
+            ),
+          ),
+        );
       _lastCheckinNotification =
           'Ca này chưa có phiên điểm danh; đã tải $classCode từ Google Sheets.';
       notifyListeners();
@@ -720,6 +829,11 @@ class AttendanceProvider extends ChangeNotifier {
     String classCode,
     String rawCsv,
   ) async {
+    if (hasUnsavedAttendanceChanges || _savingAttendanceDraft) {
+      throw StateError(
+        'Hãy lưu hoặc hủy các dòng đã sửa trước khi import CSV.',
+      );
+    }
     final result = parseStudentCsv(rawCsv, classCode);
     final payload = await _attendanceApi.syncClassRoster(
       classCode,
@@ -848,16 +962,39 @@ class AttendanceProvider extends ChangeNotifier {
 
   void toggleStudentStatus(Student student, AttendanceStatus newStatus) {
     final sessionId = _currentSession.serverSessionId;
-    if (sessionId == null) {
-      _lastCheckinNotification =
-          'Hãy mở phiên điểm danh trước khi sửa trạng thái để đồng bộ với FAP Demo.';
-      notifyListeners();
-      return;
-    }
+    if (_savingAttendanceDraft || _loadingSelectedSession) return;
     if (student.status == newStatus ||
         _pendingAttendanceRollNos.contains(student.rollNo)) {
       return;
     }
+    if (!_currentSession.isOpen) {
+      final remote = _latestServerStudents[student.rollNo];
+      final originalStatus =
+          _attendanceDrafts[student.rollNo]?.originalStatus ??
+          remote?.status ??
+          student.status;
+      if (newStatus == (remote?.status ?? originalStatus)) {
+        _attendanceDrafts.remove(student.rollNo);
+        student.status = remote?.status ?? originalStatus;
+        student.checkinTime = remote?.checkinTime;
+      } else {
+        final checkinTime =
+            newStatus == AttendanceStatus.present ||
+                newStatus == AttendanceStatus.late
+            ? student.checkinTime ?? DateTime.now()
+            : null;
+        _attendanceDrafts[student.rollNo] = _AttendanceDraft(
+          originalStatus: originalStatus,
+          status: newStatus,
+          checkinTime: checkinTime,
+        );
+        student.status = newStatus;
+        student.checkinTime = checkinTime;
+      }
+      notifyListeners();
+      return;
+    }
+    if (sessionId == null) return;
     final previousStatus = student.status;
     _pendingAttendanceRollNos.add(student.rollNo);
     student.status = newStatus;
@@ -870,6 +1007,107 @@ class AttendanceProvider extends ChangeNotifier {
     unawaited(
       _updateServerAttendance(sessionId, student, newStatus, previousStatus),
     );
+  }
+
+  void discardAttendanceDraft() {
+    if (_savingAttendanceDraft || _attendanceDrafts.isEmpty) return;
+    for (final student in _students) {
+      if (!_attendanceDrafts.containsKey(student.rollNo)) continue;
+      final remote = _latestServerStudents[student.rollNo];
+      student.status = remote?.status ?? AttendanceStatus.notChecked;
+      student.checkinTime = remote?.checkinTime;
+    }
+    _attendanceDrafts.clear();
+    _lastCheckinNotification = 'Đã hủy các thay đổi chưa lưu.';
+    notifyListeners();
+  }
+
+  Future<bool> saveAttendanceDraft() async {
+    if (_savingAttendanceDraft ||
+        _attendanceDrafts.isEmpty ||
+        _currentSession.isOpen ||
+        _selectedSlot == null) {
+      return false;
+    }
+    final conflicted = _attendanceDrafts.keys
+        .where(isAttendanceDraftConflicted)
+        .toList();
+    if (conflicted.isNotEmpty) {
+      _lastCheckinNotification =
+          '⚠️ ${conflicted.length} dòng đã đổi trên Google Sheets (${conflicted.join(', ')}). Hãy chọn lại trạng thái hoặc hủy bản nháp trước khi lưu.';
+      notifyListeners();
+      return false;
+    }
+    final session = _currentSession;
+    final changes = _attendanceDrafts.entries
+        .map(
+          (entry) => <String, String>{
+            'rollNo': entry.key,
+            'status': entry.value.status.toLabel(),
+            'expectedStatus': entry.value.originalStatus.toLabel(),
+          },
+        )
+        .toList();
+    _savingAttendanceDraft = true;
+    _draftSaveGeneration++;
+    notifyListeners();
+    try {
+      final payload = await _attendanceApi.saveAttendanceBatch(
+        session,
+        changes,
+      );
+      final snapshot = payload['session'];
+      if (snapshot is! Map) {
+        throw const AttendanceApiException(
+          'API không trả về phiên đã lưu.',
+          500,
+        );
+      }
+      _attendanceDrafts.clear();
+      _applyServerSnapshot(Map<String, dynamic>.from(snapshot));
+      _lastCheckinNotification =
+          payload['message']?.toString() ?? 'Đã lưu lên Google Sheets.';
+      _startDashboardPolling();
+      unawaited(_connectLiveUpdates());
+      unawaited(loadAuditLogs());
+      return true;
+    } catch (error) {
+      // A slow Apps Script can commit and then time out before responding.
+      // Read back once before offering a retry, avoiding a duplicate session.
+      try {
+        Map<String, dynamic>? latest;
+        if (session.serverSessionId != null) {
+          latest = await _attendanceApi.getSession(session.serverSessionId!);
+        } else {
+          final sessions = await _attendanceApi.getSessions(
+            classCode: session.classCode,
+            subjectCode: session.subjectCode,
+            slot: session.slot,
+          );
+          latest = AttendanceSessionMatcher.forTimetableSlot(
+            sessions,
+            classCode: session.classCode,
+            subjectCode: session.subjectCode,
+            slot: session.slot,
+            date: session.date,
+          );
+        }
+        if (latest != null) {
+          _applyServerSnapshot(latest);
+          _startDashboardPolling();
+          unawaited(_connectLiveUpdates());
+        }
+      } catch (readError) {
+        debugPrint('Cannot verify batch save after error: $readError');
+      }
+      _lastCheckinNotification = _attendanceDrafts.isEmpty
+          ? 'Đã xác nhận các thay đổi trên Google Sheets sau khi kết nối gián đoạn.'
+          : '⚠️ Chưa lưu được bản nháp: $error. Các dòng đã sửa vẫn được giữ lại.';
+      return _attendanceDrafts.isEmpty;
+    } finally {
+      _savingAttendanceDraft = false;
+      notifyListeners();
+    }
   }
 
   Future<void> _updateServerAttendance(
@@ -1143,4 +1381,16 @@ class AttendanceProvider extends ChangeNotifier {
     unawaited(_liveService.disconnect());
     super.dispose();
   }
+}
+
+class _AttendanceDraft {
+  final AttendanceStatus originalStatus;
+  final AttendanceStatus status;
+  final DateTime? checkinTime;
+
+  const _AttendanceDraft({
+    required this.originalStatus,
+    required this.status,
+    required this.checkinTime,
+  });
 }

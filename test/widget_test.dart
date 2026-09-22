@@ -4,6 +4,43 @@ import 'package:fap_attendance_app/main.dart';
 import 'package:fap_attendance_app/models/student.dart';
 
 void main() {
+  testWidgets(
+    'Only today keeps the orange day header after selecting another day',
+    (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1920, 1080);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(const FapAttendanceApp());
+      final today = DateTime.now().weekday;
+      final otherDay = today == 4 ? 1 : 4;
+
+      Color headerBorderColor(int day) {
+        final header = find.byKey(ValueKey('day-header-$day'));
+        final container = find
+            .descendant(of: header, matching: find.byType(Container))
+            .first;
+        final decoration =
+            tester.widget<Container>(container).decoration! as BoxDecoration;
+        return (decoration.border! as Border).top.color;
+      }
+
+      const orange = Color(0xFFF36F21);
+      expect(headerBorderColor(today), orange);
+      expect(headerBorderColor(otherDay), isNot(orange));
+
+      final classCell = find.byKey(ValueKey('day-slot-$otherDay-1'));
+      await tester.tap(
+        find.descendant(of: classCell, matching: find.text('PRN232')),
+      );
+      await tester.pump();
+
+      expect(headerBorderColor(today), orange);
+      expect(headerBorderColor(otherDay), isNot(orange));
+    },
+  );
+
   testWidgets('Selecting a timetable slot updates the active class', (
     WidgetTester tester,
   ) async {
@@ -63,7 +100,7 @@ void main() {
     );
     expect(
       find.text(
-        'Mở phiên điểm danh để chỉnh trạng thái và đồng bộ với cổng FAP mô phỏng.',
+        'Có thể sửa nhiều dòng trước khi mở phiên QR. Bấm Lưu để ghi một lần lên Google Sheets.',
       ),
       findsOneWidget,
     );

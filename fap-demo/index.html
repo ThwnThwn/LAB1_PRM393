@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1b2a4a">
   <title>Cổng FAP mô phỏng | Lab 1</title>
-  <link rel="stylesheet" href="./style.css?v=20260922-2">
+  <link rel="stylesheet" href="./style.css?v=20260922-4">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
@@ -50,14 +50,22 @@
       </div>
 
       <div class="session-picker-bar">
-        <label class="session-picker-field" for="session-picker">
-          <span>Chọn lớp / ca học để kiểm thử</span>
-          <select id="session-picker" aria-describedby="session-picker-help" disabled>
-            <option value="">Đang tải danh sách lớp...</option>
-          </select>
-        </label>
+        <div class="session-picker-fields">
+          <label class="session-picker-field" for="class-filter">
+            <span>Chọn lớp</span>
+            <select id="class-filter" aria-describedby="session-picker-help" disabled>
+              <option value="">Tất cả lớp</option>
+            </select>
+          </label>
+          <label class="session-picker-field" for="subject-filter">
+            <span>Chọn môn học</span>
+            <select id="subject-filter" aria-describedby="session-picker-help" disabled>
+              <option value="">Tất cả môn học</option>
+            </select>
+          </label>
+        </div>
         <p id="session-picker-help" class="session-picker-help">
-          Có thể xem ca mới nhất tự động hoặc chọn một phiên cụ thể theo lớp, ngày và slot.
+          Chọn lớp và môn học để tự xem ca học mới nhất phù hợp.
         </p>
       </div>
 
@@ -164,6 +172,6 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="./app.js?v=20260922-2" defer></script>
+  <script src="./app.js?v=20260922-4" defer></script>
 </body>
 </html>

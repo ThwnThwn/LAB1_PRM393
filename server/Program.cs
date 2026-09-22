@@ -463,6 +463,22 @@ app.MapPatch("/api/sessions/{sessionId}/attendance/{rollNo}", async (
     }, statusCode: result.StatusCode);
 });
 
+app.MapPost("/api/sessions/attendance/batch", async (
+    SaveAttendanceBatchRequest request,
+    AttendanceService service,
+    GoogleSheetsPrimaryStore sheetsStore,
+    CancellationToken cancellationToken) =>
+{
+    if (!sheetsStore.IsConfigured) return GoogleSheetsRequiredResult();
+    var result = await service.SaveAttendanceBatchAsync(request, cancellationToken);
+    return Results.Json(new
+    {
+        success = result.Success,
+        message = result.Message,
+        session = result.Value,
+    }, statusCode: result.StatusCode);
+});
+
 app.MapGet("/api/sessions/{sessionId}/audit", async (
     string sessionId,
     AttendanceService service,

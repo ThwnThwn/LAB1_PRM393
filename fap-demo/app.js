@@ -23,9 +23,16 @@ const state = {
   snapshot: null,
   sessions: [],
   selectedSessionId: initialSessionId,
+  pinnedSessionId: initialSessionId,
   sessionsLoading: true,
   sessionsRefreshing: false,
   sessionsError: "",
+  classFilter: "",
+  subjectFilter: "",
+  filtersHydrated: false,
+  filteredEmpty: false,
+  selectionSerial: 0,
+  refreshRequestId: 0,
   drafts: new Map(),
   dirty: new Set(),
   baseStatuses: new Map(),
@@ -56,7 +63,8 @@ const elements = {
   message: document.querySelector("#system-message"),
   lastUpdated: document.querySelector("#last-updated"),
   toast: document.querySelector("#toast"),
-  sessionPicker: document.querySelector("#session-picker"),
+  classFilter: document.querySelector("#class-filter"),
+  subjectFilter: document.querySelector("#subject-filter"),
   sessionPickerHelp: document.querySelector("#session-picker-help"),
 };
 
@@ -165,16 +173,32 @@ function attendanceEndpoint(sessionId) {
     : API.attendance;
 }
 
-function sessionOptionLabel(session) {
-  const stateLabel = session.isOpen ? "Đang mở" : "Đã đóng";
-  return `${session.subjectCode || "Môn học"} · Slot ${session.slot ?? "—"} · ${formatSessionDate(session.date)} · ${stateLabel}`;
+function sessionMatchesFilters(session) {
+  return (!state.classFilter || session.classCode === state.classFilter) &&
+    (!state.subjectFilter || session.subjectCode === state.subjectFilter);
+}
+
+function filteredSessions() {
+  return state.sessions.filter(sessionMatchesFilters).sort((a, b) => {
+    const dateOrder = String(b.date || "").localeCompare(String(a.date || ""));
+    if (dateOrder) return dateOrder;
+    const openedOrder = String(b.openedAt || "").localeCompare(String(a.openedAt || ""));
+    return openedOrder || (Number(b.slot) || 0) - (Number(a.slot) || 0);
+  });
+}
+
+function availableSubjects() {
+  return [...new Set(state.sessions
+    .filter((session) => !state.classFilter || session.classCode === state.classFilter)
+    .map((session) => session.subjectCode)
+    .filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi"));
 }
 
 function updateSessionUrl() {
   const url = new URL(window.location.href);
   url.searchParams.delete("teacherToken");
-  if (state.selectedSessionId) {
-    url.searchParams.set("sessionId", state.selectedSessionId);
+  if (state.pinnedSessionId) {
+    url.searchParams.set("sessionId", state.pinnedSessionId);
   } else {
     url.searchParams.delete("sessionId");
   }
@@ -182,50 +206,46 @@ function updateSessionUrl() {
 }
 
 function renderSessionPicker() {
-  if (!elements.sessionPicker) return;
-
-  const groups = new Map();
-  for (const session of state.sessions) {
-    const classCode = session.classCode || "Chưa xác định lớp";
-    if (!groups.has(classCode)) groups.set(classCode, []);
-    groups.get(classCode).push(session);
-  }
-
-  const latest = state.sessions[0];
-  const automaticLabel = latest
-    ? `Ca mới nhất (tự động) — ${latest.classCode || "Lớp học"} · Slot ${latest.slot ?? "—"}`
-    : "Ca mới nhất (tự động)";
-  const groupedOptions = [...groups.entries()].map(([classCode, sessions]) => `
-    <optgroup label="${escapeHtml(classCode)}">
-      ${sessions.map((session) => `
-        <option value="${escapeHtml(session.sessionId)}">${escapeHtml(sessionOptionLabel(session))}</option>
-      `).join("")}
-    </optgroup>
-  `).join("");
-  const optionsSignature = state.sessions
-    .map((session) => [session.sessionId, session.classCode, session.subjectCode, session.slot, session.date, session.isOpen].join("|"))
-    .join(";");
-  if (elements.sessionPicker.dataset.optionsSignature !== optionsSignature) {
-    elements.sessionPicker.innerHTML = `
-      <option value="">${escapeHtml(automaticLabel)}</option>
-      ${groupedOptions}
+  const classes = [...new Set(state.sessions.map((session) => session.classCode).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "vi"));
+  const classSignature = classes.join("|");
+  if (elements.classFilter.dataset.optionsSignature !== classSignature) {
+    elements.classFilter.innerHTML = `
+      <option value="">Tất cả lớp</option>
+      ${classes.map((classCode) => `<option value="${escapeHtml(classCode)}">${escapeHtml(classCode)}</option>`).join("")}
     `;
-    elements.sessionPicker.dataset.optionsSignature = optionsSignature;
+    elements.classFilter.dataset.optionsSignature = classSignature;
   }
-  if (elements.sessionPicker.value !== state.selectedSessionId) {
-    elements.sessionPicker.value = state.selectedSessionId;
-  }
+  if (elements.classFilter.value !== state.classFilter) elements.classFilter.value = state.classFilter;
 
+  const subjects = availableSubjects();
+  const subjectSignature = `${state.classFilter}|${subjects.join("|")}`;
+  if (elements.subjectFilter.dataset.optionsSignature !== subjectSignature) {
+    elements.subjectFilter.innerHTML = `
+      <option value="">Tất cả môn học</option>
+      ${subjects.map((subjectCode) => `<option value="${escapeHtml(subjectCode)}">${escapeHtml(subjectCode)}</option>`).join("")}
+    `;
+    elements.subjectFilter.dataset.optionsSignature = subjectSignature;
+  }
+  if (elements.subjectFilter.value !== state.subjectFilter) elements.subjectFilter.value = state.subjectFilter;
+
+  const visibleSessions = filteredSessions();
   const hasUnsavedChanges = state.dirty.size > 0;
-  elements.sessionPicker.disabled = state.sessionsLoading || state.saving || hasUnsavedChanges || state.sessions.length === 0;
+  const filtersDisabled = state.sessionsLoading || state.saving || hasUnsavedChanges || state.sessions.length === 0;
+  elements.classFilter.disabled = filtersDisabled;
+  elements.subjectFilter.disabled = filtersDisabled || subjects.length === 0;
   if (state.sessionsError) {
     elements.sessionPickerHelp.textContent = `Không tải được danh sách lớp: ${state.sessionsError}`;
   } else if (hasUnsavedChanges) {
-    elements.sessionPickerHelp.textContent = `Hãy lưu hoặc hoàn tác ${state.dirty.size} thay đổi trước khi chuyển lớp.`;
-  } else if (state.selectedSessionId) {
-    elements.sessionPickerHelp.textContent = "Đang xem cố định phiên đã chọn. Chọn “Ca mới nhất” để tự động theo phiên vừa mở trên desktop.";
+    elements.sessionPickerHelp.textContent = `Hãy lưu hoặc hoàn tác ${state.dirty.size} thay đổi trước khi đổi lớp hoặc môn học.`;
+  } else if (visibleSessions.length === 0 && !state.sessionsLoading) {
+    elements.sessionPickerHelp.textContent = "Không có ca học phù hợp. Hãy chọn lớp hoặc môn học khác.";
+  } else if (state.pinnedSessionId) {
+    elements.sessionPickerHelp.textContent = "Đang xem ca học từ liên kết. Đổi lớp hoặc môn học để tự theo ca mới nhất.";
+  } else if (state.classFilter && subjects.length === 1) {
+    elements.sessionPickerHelp.textContent = "Lớp này chỉ có một môn học; đang tự theo ca mới nhất. Ngày và slot hiển thị bên dưới.";
   } else {
-    elements.sessionPickerHelp.textContent = "Đang tự động theo ca mới nhất. Mở danh sách để chọn một lớp, ngày và slot cụ thể.";
+    elements.sessionPickerHelp.textContent = "Đang tự theo ca mới nhất phù hợp. Ngày và slot hiển thị bên dưới.";
   }
 }
 
@@ -233,18 +253,33 @@ async function loadSessions({ manual = false } = {}) {
   if (state.sessionsRefreshing) return;
   state.sessionsRefreshing = true;
   if (state.sessions.length === 0) state.sessionsLoading = true;
+  let loaded = false;
   try {
     const response = await fetch(API.sessions, { cache: "no-store" });
     const body = await readJson(response);
     state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
     if (state.snapshot?.sessionId) upsertSessionSummary(state.snapshot);
+    if (!state.filtersHydrated) {
+      const linked = state.sessions.find((session) => session.sessionId === state.pinnedSessionId);
+      if (linked) {
+        state.classFilter = linked.classCode || "";
+        state.subjectFilter = linked.subjectCode || "";
+        state.filtersHydrated = true;
+      } else if (!state.pinnedSessionId) {
+        state.filtersHydrated = true;
+      }
+    }
     state.sessionsError = "";
+    loaded = true;
   } catch (error) {
     state.sessionsError = error.message;
     if (manual) showToast(`Không thể nạp danh sách lớp: ${error.message}`, true);
   } finally {
     state.sessionsRefreshing = false;
     state.sessionsLoading = false;
+    if (loaded && !state.pinnedSessionId && !state.saving && state.dirty.size === 0) {
+      await applySessionFilters();
+    }
     renderSessionPicker();
   }
 }
@@ -333,8 +368,15 @@ function applySuccessfulSnapshot(snapshot, force, source = "poll") {
 }
 
 async function refreshData({ manual = false, force = false } = {}) {
-  if (state.saving || state.refreshing) return;
+  if (state.filteredEmpty) {
+    state.loading = false;
+    render();
+    return;
+  }
+  if (state.saving || (state.refreshing && !force)) return;
   if (!manual && !force && Date.now() < state.nextRetryAt) return;
+  const requestId = ++state.refreshRequestId;
+  const selectionSerialAtStart = state.selectionSerial;
   state.refreshing = true;
   const liveSerialAtStart = state.liveUpdateSerial;
   if (manual) elements.refreshButton.disabled = true;
@@ -342,11 +384,15 @@ async function refreshData({ manual = false, force = false } = {}) {
   try {
     const response = await fetch(attendanceEndpoint(state.selectedSessionId), { cache: "no-store" });
     const snapshot = await readJson(response);
-    if (liveSerialAtStart !== state.liveUpdateSerial) return;
+    if (requestId !== state.refreshRequestId ||
+        selectionSerialAtStart !== state.selectionSerial ||
+        liveSerialAtStart !== state.liveUpdateSerial) return;
     applySuccessfulSnapshot(snapshot, force);
     if (manual) showToast("Đã nạp dữ liệu mới nhất.");
   } catch (error) {
-    if (liveSerialAtStart !== state.liveUpdateSerial) return;
+    if (requestId !== state.refreshRequestId ||
+        selectionSerialAtStart !== state.selectionSerial ||
+        liveSerialAtStart !== state.liveUpdateSerial) return;
     state.loading = false;
     state.sheetsConfigured = false;
     state.retryDelayMs = state.retryDelayMs
@@ -359,8 +405,10 @@ async function refreshData({ manual = false, force = false } = {}) {
     showSystemMessage(`Chưa tải được điểm danh: ${detail} Trang sẽ tự thử lại, không cần bấm Nạp lại.`);
     render();
   } finally {
-    state.refreshing = false;
-    elements.refreshButton.disabled = false;
+    if (requestId === state.refreshRequestId) {
+      state.refreshing = false;
+      elements.refreshButton.disabled = false;
+    }
   }
 }
 
@@ -382,7 +430,9 @@ function renderSession() {
     "#session-description",
     hasSession
       ? `${snapshot.subjectCode || "Môn học"} · ${snapshot.classCode || "Lớp học"} · Slot ${snapshot.slot ?? "—"}`
-      : "Mở một phiên điểm danh trên desktop app để bắt đầu."
+      : (state.filteredEmpty
+        ? "Không có ca học phù hợp với lớp và môn học đã chọn."
+        : "Mở một phiên điểm danh trên desktop app để bắt đầu.")
   );
 
   const stats = snapshot?.stats || {};
@@ -412,7 +462,9 @@ function renderRows() {
 
   const students = filteredStudents();
   if (!state.snapshot?.sessionId) {
-    elements.rows.innerHTML = state.connected
+    elements.rows.innerHTML = state.filteredEmpty
+      ? '<tr class="empty-row"><td colspan="9">Không có ca học phù hợp. Hãy chọn lớp hoặc môn học khác.</td></tr>'
+      : state.connected
       ? '<tr class="empty-row"><td colspan="9">Chưa có ca học. Hãy mở phiên điểm danh trên desktop app.</td></tr>'
       : '<tr class="empty-row"><td colspan="9">Chưa tải được dữ liệu. Trang sẽ tự kết nối lại.</td></tr>';
     return;
@@ -528,22 +580,64 @@ elements.filter.addEventListener("change", () => {
   renderRows();
 });
 
-elements.sessionPicker.addEventListener("change", async () => {
-  if (state.dirty.size > 0) {
-    elements.sessionPicker.value = state.selectedSessionId;
-    showToast("Hãy lưu hoặc hoàn tác thay đổi trước khi chuyển lớp.", true);
-    return;
+async function selectSession(sessionId, toastMessage = "") {
+  if (state.saving || state.dirty.size > 0) {
+    renderSessionPicker();
+    if (toastMessage) showToast("Hãy lưu hoặc hoàn tác thay đổi trước khi đổi lớp hoặc môn học.", true);
+    return false;
   }
 
-  state.selectedSessionId = elements.sessionPicker.value;
+  state.filteredEmpty = Boolean(state.classFilter || state.subjectFilter) && filteredSessions().length === 0;
+  if (sessionId === state.selectedSessionId && !state.filteredEmpty) {
+    renderSessionPicker();
+    return true;
+  }
+  state.selectedSessionId = sessionId;
+  state.selectionSerial += 1;
   state.snapshot = null;
   state.drafts.clear();
+  state.dirty.clear();
   state.baseStatuses.clear();
-  state.loading = true;
+  state.loading = !state.filteredEmpty;
   updateSessionUrl();
   render();
-  await refreshData({ force: true });
-  showToast(state.selectedSessionId ? "Đã chuyển sang lớp và ca học đã chọn." : "Đã chuyển về ca học mới nhất.");
+  if (!state.filteredEmpty) await refreshData({ force: true });
+  if (toastMessage) showToast(toastMessage);
+  return true;
+}
+
+async function applySessionFilters() {
+  const visible = filteredSessions();
+  const target = !state.classFilter && !state.subjectFilter
+    ? ""
+    : visible[0]?.sessionId || "";
+  await selectSession(target);
+}
+
+elements.classFilter.addEventListener("change", async () => {
+  if (state.dirty.size > 0 || state.saving) {
+    renderSessionPicker();
+    return;
+  }
+  state.filtersHydrated = true;
+  state.pinnedSessionId = "";
+  updateSessionUrl();
+  state.classFilter = elements.classFilter.value;
+  const subjects = availableSubjects();
+  state.subjectFilter = subjects.length === 1 ? subjects[0] : "";
+  await applySessionFilters();
+});
+
+elements.subjectFilter.addEventListener("change", async () => {
+  if (state.dirty.size > 0 || state.saving) {
+    renderSessionPicker();
+    return;
+  }
+  state.filtersHydrated = true;
+  state.pinnedSessionId = "";
+  updateSessionUrl();
+  state.subjectFilter = elements.subjectFilter.value;
+  await applySessionFilters();
 });
 
 elements.refreshButton.addEventListener("click", async () => {
@@ -569,6 +663,19 @@ function connectLiveUpdates() {
       const update = JSON.parse(event.data);
       const snapshot = update.snapshot;
       if (!snapshot?.sessionId) return;
+      upsertSessionSummary(snapshot);
+      if (state.pinnedSessionId && snapshot.sessionId !== state.pinnedSessionId) return;
+      if (state.classFilter || state.subjectFilter) {
+        if (!sessionMatchesFilters(snapshot)) return;
+        const latest = filteredSessions()[0];
+        if (latest?.sessionId !== state.selectedSessionId) {
+          if (state.pinnedSessionId || state.saving || state.dirty.size > 0 ||
+              latest?.sessionId !== snapshot.sessionId) return;
+          state.filteredEmpty = false;
+          state.selectedSessionId = snapshot.sessionId;
+          state.selectionSerial += 1;
+        }
+      }
       if (state.selectedSessionId && snapshot.sessionId !== state.selectedSessionId) return;
       if (!state.selectedSessionId &&
           state.snapshot?.sessionId !== snapshot.sessionId &&

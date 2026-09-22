@@ -55,6 +55,20 @@ public sealed record UpdateAttendanceRequest(
     string? Reason,
     string? ExpectedStatus = null);
 
+public sealed record AttendanceBatchChange(
+    string? RollNo,
+    string? Status,
+    string? ExpectedStatus);
+
+public sealed record SaveAttendanceBatchRequest(
+    string? SessionId,
+    string? ClassCode,
+    string? SubjectCode,
+    int Slot,
+    string? Date,
+    string? Actor,
+    IReadOnlyCollection<AttendanceBatchChange>? Changes);
+
 public sealed record ReleaseDeviceRequest(string? Actor, string? Reason);
 
 public sealed record GoogleSheetsConfigurationRequest(string? WebAppUrl);

@@ -143,8 +143,8 @@ class AttendanceApiService {
     final query = Uri(
       queryParameters: {
         'limit': '$limit',
-        if (classCode != null) 'classCode': classCode,
-        if (subjectCode != null) 'subjectCode': subjectCode,
+        'classCode': ?classCode,
+        'subjectCode': ?subjectCode,
         if (slot != null) 'slot': '$slot',
       },
     ).query;
@@ -208,6 +208,21 @@ class AttendanceApiService {
         if (expectedStatus != null) 'expectedStatus': expectedStatus.toLabel(),
       },
     );
+  }
+
+  Future<Map<String, dynamic>> saveAttendanceBatch(
+    AttendanceSession session,
+    List<Map<String, String>> changes,
+  ) {
+    return _sendJson('POST', '/api/sessions/attendance/batch', {
+      'sessionId': session.serverSessionId,
+      'classCode': session.classCode,
+      'subjectCode': session.subjectCode,
+      'slot': session.slot,
+      'date': session.date.toIso8601String().split('T').first,
+      'actor': 'Giảng viên',
+      'changes': changes,
+    });
   }
 
   Future<List<Map<String, dynamic>>> getAuditLogs(String sessionId) async {
