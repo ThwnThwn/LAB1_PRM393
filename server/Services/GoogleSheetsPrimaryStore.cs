@@ -401,18 +401,12 @@ public sealed class GoogleSheetsPrimaryStore
             DateTime? closedAt = schedule.Completed ? openedAt.AddMinutes(135) : null;
             var students = roster.Select((student, index) =>
             {
-                var status = AttendanceStatuses.NotChecked;
-                if (schedule.Completed)
-                {
-                    status = index is 6 or 18
-                        ? AttendanceStatuses.Absent
-                        : index is 4 or 10 or 22
-                            ? AttendanceStatuses.Late
-                            : AttendanceStatuses.Present;
-                }
+                var status = schedule.Completed && index is not 6 and not 18
+                    ? AttendanceStatuses.Present
+                    : AttendanceStatuses.Absent;
 
-                var checkinTime = status == AttendanceStatuses.Present || status == AttendanceStatuses.Late
-                    ? openedAt.AddMinutes(status == AttendanceStatuses.Late ? 15 + index % 5 : 2 + index % 7)
+                var checkinTime = status == AttendanceStatuses.Present
+                    ? openedAt.AddMinutes(2 + index % 12)
                     : (DateTime?)null;
                 return new AttendanceRecord(
                     schedule.SessionId,
@@ -428,16 +422,12 @@ public sealed class GoogleSheetsPrimaryStore
                     $"DEMO{index + 1:00}");
             }).ToArray();
             var present = students.Count(student => student.Status == AttendanceStatuses.Present);
-            var late = students.Count(student => student.Status == AttendanceStatuses.Late);
             var absent = students.Count(student => student.Status == AttendanceStatuses.Absent);
-            var notChecked = students.Count(student => student.Status == AttendanceStatuses.NotChecked);
             var stats = new DashboardStats(
                 students.Length,
                 present,
-                late,
                 absent,
-                notChecked,
-                students.Length == 0 ? 0 : (present + late) * 100.0 / students.Length);
+                students.Length == 0 ? 0 : present * 100.0 / students.Length);
             var snapshot = new AttendanceSnapshot(
                 "success",
                 schedule.SessionId,
@@ -740,16 +730,12 @@ public sealed class GoogleSheetsPrimaryStore
             : [];
 
         var present = students.Count(student => student.Status == AttendanceStatuses.Present);
-        var late = students.Count(student => student.Status == AttendanceStatuses.Late);
         var absent = students.Count(student => student.Status == AttendanceStatuses.Absent);
-        var notChecked = students.Count(student => student.Status == AttendanceStatuses.NotChecked);
         var stats = new DashboardStats(
             students.Length,
             present,
-            late,
             absent,
-            notChecked,
-            students.Length == 0 ? 0 : (present + late) * 100.0 / students.Length);
+            students.Length == 0 ? 0 : present * 100.0 / students.Length);
         var publicBindings = bindings.Select(binding => new DeviceBindingRecord(
             binding.Id,
             binding.DeviceCode,
@@ -783,8 +769,7 @@ public sealed class GoogleSheetsPrimaryStore
 
     private static string NormalizeStatus(string value)
     {
-        var normalized = value.Trim().ToUpperInvariant();
-        return AttendanceStatuses.All.Contains(normalized) ? normalized : AttendanceStatuses.NotChecked;
+        return AttendanceStatuses.Normalize(value);
     }
 
     private static bool ReadBool(JsonElement item, string propertyName)

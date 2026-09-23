@@ -49,31 +49,31 @@ test("desktop updates replace only conflicting unsaved web drafts", () => {
   context.initial = {
     sessionId: "session-1",
     students: [
-      { rollNo: "A", status: "NOT CHECKED" },
-      { rollNo: "B", status: "NOT CHECKED" },
+      { rollNo: "A", status: "ABSENT" },
+      { rollNo: "B", status: "ABSENT" },
     ],
   };
   vm.runInContext("mergeSnapshot(initial, true)", context);
   vm.runInContext(`
     state.drafts.set("A", "PRESENT");
     state.dirty.add("A");
-    state.baseStatuses.set("A", "NOT CHECKED");
+    state.baseStatuses.set("A", "ABSENT");
     state.drafts.set("B", "ABSENT");
     state.dirty.add("B");
-    state.baseStatuses.set("B", "NOT CHECKED");
+    state.baseStatuses.set("B", "ABSENT");
   `, context);
 
   context.updated = {
     sessionId: "session-1",
     students: [
-      { rollNo: "A", status: "ABSENT" },
-      { rollNo: "B", status: "NOT CHECKED" },
+      { rollNo: "A", status: "PRESENT" },
+      { rollNo: "B", status: "ABSENT" },
     ],
   };
   vm.runInContext("mergeSnapshot(updated, false)", context);
 
   assert.equal(vm.runInContext('state.dirty.has("A")', context), false);
-  assert.equal(vm.runInContext('state.drafts.get("A")', context), "ABSENT");
+  assert.equal(vm.runInContext('state.drafts.get("A")', context), "PRESENT");
   assert.equal(vm.runInContext('state.dirty.has("B")', context), true);
   assert.equal(vm.runInContext('state.drafts.get("B")', context), "ABSENT");
 });
@@ -82,13 +82,13 @@ test("switching sessions clears drafts from the previous class", () => {
   const context = createAppContext();
   context.initial = {
     sessionId: "session-1",
-    students: [{ rollNo: "A", status: "NOT CHECKED" }],
+    students: [{ rollNo: "A", status: "ABSENT" }],
   };
   vm.runInContext("mergeSnapshot(initial, true)", context);
   vm.runInContext(`
     state.drafts.set("A", "PRESENT");
     state.dirty.add("A");
-    state.baseStatuses.set("A", "NOT CHECKED");
+    state.baseStatuses.set("A", "ABSENT");
   `, context);
 
   context.updated = {
@@ -380,7 +380,7 @@ test("desktop close reaches the open FAP page even when a Sheet read is stale", 
     slot: 1,
     isOpen: true,
     count: 1,
-    students: [{ rollNo: "SE191709", status: "NOT CHECKED" }],
+    students: [{ rollNo: "SE191709", status: "ABSENT" }],
   };
   vm.runInContext("mergeSnapshot(openSnapshot, true); connectLiveUpdates()", context);
 

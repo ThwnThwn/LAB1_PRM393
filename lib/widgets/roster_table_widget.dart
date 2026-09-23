@@ -155,14 +155,6 @@ class RosterTableWidget extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               _buildFilterChip(
-                'Trễ',
-                provider.filterStatus == AttendanceStatus.late,
-                const Color(0xFFF59E0B),
-                '${provider.countLate}',
-                () => provider.setFilterStatus(AttendanceStatus.late),
-              ),
-              const SizedBox(width: 6),
-              _buildFilterChip(
                 'Vắng',
                 provider.filterStatus == AttendanceStatus.absent,
                 const Color(0xFFEF4444),
@@ -616,12 +608,8 @@ class RosterTableWidget extends StatelessWidget {
     switch (status) {
       case AttendanceStatus.present:
         return const Color(0xFF22C55E);
-      case AttendanceStatus.late:
-        return const Color(0xFFF59E0B);
       case AttendanceStatus.absent:
         return const Color(0xFFEF4444);
-      case AttendanceStatus.notChecked:
-        return const Color(0xFF9CA3AF);
     }
   }
 
@@ -629,12 +617,8 @@ class RosterTableWidget extends StatelessWidget {
     switch (status) {
       case AttendanceStatus.present:
         return Icons.check_circle_rounded;
-      case AttendanceStatus.late:
-        return Icons.access_time_filled;
       case AttendanceStatus.absent:
         return Icons.cancel_rounded;
-      case AttendanceStatus.notChecked:
-        return Icons.radio_button_unchecked;
     }
   }
 

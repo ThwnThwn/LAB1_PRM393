@@ -471,7 +471,7 @@ function buildSessionPayload(session, allAttendance, allBindings, allAudit) {
       classCode: item.ClassCode,
       subjectCode: item.SubjectCode,
       slot: Number(item.Slot || session.Slot || 0),
-      status: item.Status || "NOT CHECKED",
+      status: item.Status || "ABSENT",
       checkinTime: item.CheckinTime || null,
       notes: item.Notes || "",
       confirmationCode: item.ConfirmationCode || ""
@@ -645,13 +645,11 @@ function doPost(e) {
         for (var a = 0; a < names.length; a++) {
           var studentRollNo = "SE" + String(191701 + a);
           var studentEmail = studentRollNo.toLowerCase() + "@fpt.edu.vn";
-          var status = "NOT CHECKED";
+          var status = "ABSENT";
           if (demoClassSession.completed) {
-            status = a === 6 || a === 18
-              ? "ABSENT"
-              : (a === 4 || a === 10 || a === 22 ? "LATE" : "PRESENT");
+            status = a === 6 || a === 18 ? "ABSENT" : "PRESENT";
           }
-          var checkinTime = status === "PRESENT" || status === "LATE"
+          var checkinTime = status === "PRESENT"
             ? demoClassSession.openedAt
             : "";
           attendanceRows.push([

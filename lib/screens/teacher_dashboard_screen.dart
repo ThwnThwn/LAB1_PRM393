@@ -604,7 +604,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                       provider.isSessionOpen
                           ? 'Đóng điểm danh'
                           : provider.serverSessionId != null
-                          ? 'Tạo phiên mới'
+                          ? 'Mở lại điểm danh'
                           : 'Mở điểm danh',
                     ),
                     style: ElevatedButton.styleFrom(
@@ -699,24 +699,10 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                         ),
                         const SizedBox(width: 10),
                         _buildStatCard(
-                          'Trễ',
-                          '${provider.countLate}',
-                          const Color(0xFFF59E0B),
-                          Icons.access_time_filled_rounded,
-                        ),
-                        const SizedBox(width: 10),
-                        _buildStatCard(
                           'Vắng',
                           '${provider.countAbsent}',
                           const Color(0xFFEF4444),
                           Icons.cancel_rounded,
-                        ),
-                        const SizedBox(width: 10),
-                        _buildStatCard(
-                          'Chưa điểm danh',
-                          '${provider.countNotChecked}',
-                          const Color(0xFF6B7280),
-                          Icons.radio_button_unchecked,
                         ),
                         const SizedBox(width: 10),
                         _buildStatCard(

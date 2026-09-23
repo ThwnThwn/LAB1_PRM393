@@ -572,9 +572,7 @@ class _FapAttendanceDemoScreenState extends State<FapAttendanceDemoScreen> {
     }
     final color = switch (student.status) {
       AttendanceStatus.present => const Color(0xFF16A34A),
-      AttendanceStatus.late => const Color(0xFFD97706),
       AttendanceStatus.absent => const Color(0xFFDC2626),
-      AttendanceStatus.notChecked => const Color(0xFF64748B),
     };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
@@ -605,7 +603,7 @@ class _FapAttendanceDemoScreenState extends State<FapAttendanceDemoScreen> {
         Expanded(
           child: Text(
             _savedAt == null
-                ? 'Quy tắc: PRESENT/LATE → Present; ABSENT/NOT CHECKED → Absent sau khi đóng phiên.'
+                ? 'Quy tắc: chỉ dùng PRESENT và ABSENT, đồng bộ theo trạng thái đã lưu.'
                 : 'Đã lưu Demo lúc ${_formatTime(_savedAt)} • Không gửi sang FAP thật.',
             style: TextStyle(
               color: _savedAt == null

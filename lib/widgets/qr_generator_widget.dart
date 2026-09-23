@@ -454,7 +454,7 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
             Text(
               hasSelectedSlot
                   ? hasStoredSession
-                        ? 'Trạng thái đã lưu vẫn xem được ở Danh sách sinh viên. Chỉ tạo phiên mới khi muốn điểm danh lại bằng QR.'
+                        ? 'Mở lại đúng phiên này để tiếp tục điểm danh bằng QR; dữ liệu Present/Absent đã lưu sẽ được giữ nguyên.'
                         : 'Mở phiên để tạo QR và bắt đầu nhận lượt điểm danh.'
                   : 'Chọn một ca trong thời khóa biểu trước khi mở điểm danh.',
               textAlign: TextAlign.center,
@@ -479,7 +479,7 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
               label: Text(
                 hasSelectedSlot
                     ? hasStoredSession
-                          ? 'Tạo phiên mới'
+                          ? 'Mở lại phiên'
                           : 'Mở phiên điểm danh'
                     : 'Chọn ca trong thời khóa biểu',
               ),

@@ -24,6 +24,9 @@ void main() {
       contains('rosterRowCount: demoClasses.length * names.length'),
     );
     expect(script, contains('sessionCount: demoSchedule.length'));
+    expect(script, contains('var status = "ABSENT"'));
+    expect(script, isNot(contains('"NOT CHECKED"')));
+    expect(script, isNot(contains('"LATE"')));
   });
 
   test('Apps Script template exposes the complete Google-Sheets-only API', () {

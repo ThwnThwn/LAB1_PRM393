@@ -19,6 +19,7 @@ void main() {
       expect(result.students.first.fullName, 'Phan Thị Thảo Vy');
       expect(result.students.first.email, 'sa194282@fpt.edu.vn');
       expect(result.students.first.group, 'SE1917');
+      expect(result.students.first.status, AttendanceStatus.absent);
     });
 
     test('keeps status and reports duplicate or incomplete rows', () {

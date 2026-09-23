@@ -9,6 +9,7 @@
 - Thời khóa biểu tuần và chọn ca dạy đang thao tác.
 - Import danh sách sinh viên từ CSV hoặc cấu hình Google Sheets.
 - Mở và đóng từng phiên điểm danh.
+- Mỗi lớp, môn, ngày và slot chỉ có một phiên; mở lại sẽ dùng cùng `SessionId` và giữ nguyên kết quả.
 - QR và OTP 6 số tự đổi sau mỗi 10 giây.
 - Tạm dừng đồng bộ QR, OTP và bộ đếm; mã đang giữ vẫn hợp lệ cho tới khi tiếp tục.
 - Cổng web để sinh viên quét QR, nhập MSSV, email và OTP.
@@ -17,7 +18,8 @@
 - Chống một điện thoại điểm danh nhiều MSSV trong cùng phiên bằng cookie thiết bị
   `HttpOnly` và dấu vết mạng LAN; desktop cảnh báo realtime và cho phép giảng viên
   mở khóa ngoại lệ có lý do.
-- Dashboard số lượng có mặt, trễ, vắng, chưa điểm danh và tỷ lệ chuyên cần.
+- Khi mở phiên, toàn bộ sinh viên mặc định là vắng; check-in thành công chuyển sang có mặt.
+- Dashboard chỉ dùng hai trạng thái có mặt và vắng, kèm tỷ lệ chuyên cần.
 - Cập nhật dashboard trực tiếp bằng SignalR, có polling dự phòng.
 - Lưu roster, phiên, trạng thái, thiết bị và nhật ký chỉnh sửa trực tiếp trong Google Sheets.
 - Không dùng database cục bộ; backend chỉ giữ trạng thái OTP và kết nối SignalR tạm thời trong RAM.
@@ -159,14 +161,14 @@ Nếu chỉ test trên cùng máy, có thể dùng `http://127.0.0.1:8080`. Khô
 2. Bấm đúng ca học trên lưới Slot 1–8 rồi chọn **Điểm danh lớp này**.
 3. Nếu ca chưa có phiên, vào **Điểm danh QR & OTP 10s** và bấm **Mở điểm danh**.
    Nếu ca đã có phiên trong Google Sheets, desktop tự tải trạng thái khi chọn ca;
-   không bấm **Tạo phiên mới** nếu chỉ muốn xem/chỉnh phiên đó.
+   bấm **Mở lại điểm danh** khi muốn tiếp tục nhận check-in vào chính phiên đó.
 4. Sinh viên cùng Wi-Fi quét QR trên màn hình giảng viên.
 5. Sinh viên nhập MSSV, email và OTP đang hiển thị rồi xác nhận.
 6. Tên sinh viên xuất hiện ngay trên dashboard.
 7. Nếu cùng điện thoại thử MSSV thứ hai, backend chặn yêu cầu; giảng viên chỉ mở
    khóa từ panel cảnh báo khi có lý do hợp lệ.
 8. Có thể bấm **Tạm dừng QR & OTP** để giữ nguyên QR, OTP và số giây còn lại.
-9. Bấm **Đóng điểm danh**; sinh viên chưa check-in được chuyển thành `ABSENT`.
+9. Bấm **Đóng điểm danh**; kết quả `PRESENT`/`ABSENT` hiện tại được giữ nguyên.
 10. Chuyển sang cổng FAP mô phỏng mà launcher đã mở trên trình duyệt.
 11. Trang tự nhận dữ liệu mới từ desktop/điện thoại. Có thể chọn Present/Absent rồi
     bấm **Lưu điểm danh**; thay đổi được ghi vào Google Sheets của bài demo.
@@ -202,23 +204,21 @@ Sau khi một thay đổi được ghi thành công vào Sheet (kể cả đóng
 máy chủ cũng đẩy bản cập nhật trực tiếp tới trang FAP đang mở; Google Sheets vẫn
 là nơi lưu dữ liệu duy nhất. Nếu luồng trực tiếp ngắt, trang tiếp tục tự đọc lại.
 
-Cổng mô phỏng không cho tự động tích khi nguồn báo phiên vẫn đang mở, nhằm tránh
-biến sinh viên chưa kịp check-in thành vắng. Với link CSV công khai, Google Sheets
-không cung cấp trạng thái mở/đóng; nên dùng Apps Script Web App cho luồng đầy đủ.
+Cổng mô phỏng luôn hiển thị đúng trạng thái nhị phân từ phiên hiện tại. Với link
+CSV công khai, Google Sheets không cung cấp trạng thái mở/đóng; nên dùng Apps
+Script Web App cho luồng đầy đủ.
 
 ## Quy đổi trạng thái trên cổng FAP mô phỏng
 
-Cổng mô phỏng dùng hai lựa chọn `Present` và `Absent`, nên trạng thái được quy đổi như sau:
+Cả desktop app, API và cổng mô phỏng chỉ dùng hai trạng thái:
 
 | Trạng thái trong ứng dụng | Trạng thái trên cổng mô phỏng |
 |---|---|
 | `PRESENT` | Present |
-| `LATE` | Present |
 | `ABSENT` | Absent |
-| `NOT CHECKED` | Không nên áp dụng khi phiên còn mở; khi đóng phiên sẽ đổi thành `ABSENT` |
 
-Cổng mô phỏng không tự đổi sinh viên chưa check-in thành vắng khi phiên vẫn còn mở.
-Giảng viên đóng phiên trước, kiểm tra kết quả rồi mới bấm **Lưu điểm danh**.
+Dữ liệu cũ vẫn tương thích: `LATE` được đọc thành `PRESENT`, còn `NOT CHECKED`
+được đọc thành `ABSENT`.
 
 ## API chính
 

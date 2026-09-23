@@ -19,9 +19,7 @@ class FapDemoSyncService {
 
   static String normalizeRollNo(String value) => value.trim().toUpperCase();
 
-  /// Converts the attendance database records into the two choices used by
-  /// FAP's attendance form. This method should only be called after a session
-  /// is closed; while it is open, NOT CHECKED still means "pending".
+  /// Converts the two attendance states into FAP's Present/Absent choices.
   static FapDemoSyncResult matchClosedSession({
     required List<Student> roster,
     required List<Student> attendanceRecords,
@@ -45,10 +43,8 @@ class FapDemoSyncService {
 
       matched++;
       marks[rollNo] = switch (record.status) {
-        AttendanceStatus.present ||
-        AttendanceStatus.late => FapDemoMark.present,
-        AttendanceStatus.absent ||
-        AttendanceStatus.notChecked => FapDemoMark.absent,
+        AttendanceStatus.present => FapDemoMark.present,
+        AttendanceStatus.absent => FapDemoMark.absent,
       };
     }
 

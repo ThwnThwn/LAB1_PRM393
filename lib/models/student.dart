@@ -1,21 +1,12 @@
-enum AttendanceStatus {
-  notChecked,
-  present,
-  late,
-  absent,
-}
+enum AttendanceStatus { present, absent }
 
 extension AttendanceStatusExtension on AttendanceStatus {
   String toLabel() {
     switch (this) {
       case AttendanceStatus.present:
         return 'PRESENT';
-      case AttendanceStatus.late:
-        return 'LATE';
       case AttendanceStatus.absent:
         return 'ABSENT';
-      case AttendanceStatus.notChecked:
-        return 'NOT CHECKED';
     }
   }
 
@@ -24,17 +15,16 @@ extension AttendanceStatusExtension on AttendanceStatus {
       case 'PRESENT':
       case 'CÓ MẶT':
       case 'P':
-        return AttendanceStatus.present;
       case 'LATE':
       case 'TRỄ':
       case 'L':
-        return AttendanceStatus.late;
+        return AttendanceStatus.present;
       case 'ABSENT':
       case 'VẮNG':
       case 'A':
         return AttendanceStatus.absent;
       default:
-        return AttendanceStatus.notChecked;
+        return AttendanceStatus.absent;
     }
   }
 }
@@ -53,7 +43,7 @@ class Student {
     required this.fullName,
     required this.email,
     required this.group,
-    this.status = AttendanceStatus.notChecked,
+    this.status = AttendanceStatus.absent,
     this.checkinTime,
     this.notes = '',
   });
@@ -64,8 +54,12 @@ class Student {
       fullName: map['fullName'] ?? map['FullName'] ?? '',
       email: map['email'] ?? map['Email'] ?? '',
       group: map['group'] ?? map['Group'] ?? 'SE1801',
-      status: AttendanceStatusExtension.fromString(map['status'] ?? map['Status'] ?? ''),
-      checkinTime: map['checkinTime'] != null ? DateTime.tryParse(map['checkinTime']) : null,
+      status: AttendanceStatusExtension.fromString(
+        map['status'] ?? map['Status'] ?? '',
+      ),
+      checkinTime: map['checkinTime'] != null
+          ? DateTime.tryParse(map['checkinTime'])
+          : null,
       notes: map['notes'] ?? '',
     );
   }

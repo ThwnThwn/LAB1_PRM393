@@ -429,11 +429,6 @@ h1 {
   background: var(--danger-bg);
 }
 
-.status-chip.late {
-  color: var(--warning);
-  background: var(--warning-bg);
-}
-
 .status-chip.neutral {
   color: #596579;
   background: #edf1f5;
@@ -450,7 +445,7 @@ h1 {
 
 .stats-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 16px;
   overflow: hidden;
 }
@@ -479,9 +474,7 @@ h1 {
 }
 
 .stat-item.present::before { background: var(--success); }
-.stat-item.late::before { background: #d97706; }
 .stat-item.absent::before { background: var(--danger); }
-.stat-item.pending::before { background: #64748b; }
 
 .stat-label {
   color: var(--muted);

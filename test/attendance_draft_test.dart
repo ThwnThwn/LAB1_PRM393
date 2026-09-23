@@ -32,7 +32,7 @@ class _DraftApi extends AttendanceApiService {
       'rollNo': 'SE192002',
       'fullName': 'Sinh viên 2',
       'email': 'se192002@fpt.edu.vn',
-      'status': 'NOT CHECKED',
+      'status': 'PRESENT',
     },
   ];
 
@@ -173,11 +173,7 @@ void main() {
       expect(api.batchCalls, 1);
       expect(api.savedChanges, [
         {'rollNo': 'SE192001', 'status': 'PRESENT', 'expectedStatus': 'ABSENT'},
-        {
-          'rollNo': 'SE192002',
-          'status': 'ABSENT',
-          'expectedStatus': 'NOT CHECKED',
-        },
+        {'rollNo': 'SE192002', 'status': 'ABSENT', 'expectedStatus': 'PRESENT'},
       ]);
       expect(provider.hasUnsavedAttendanceChanges, isFalse);
     },
@@ -232,26 +228,24 @@ void main() {
     expect(provider.students[0].status, AttendanceStatus.present);
   });
 
-  test('remote edit is flagged and blocks overwriting Sheet', () async {
-    final api = _DraftApi();
-    final provider = await _loadedProvider(api);
-    addTearDown(provider.dispose);
+  test(
+    'matching remote edit resolves the local draft without another write',
+    () async {
+      final api = _DraftApi();
+      final provider = await _loadedProvider(api);
+      addTearDown(provider.dispose);
 
-    provider.toggleStudentStatus(provider.students[0], AttendanceStatus.late);
-    api.remoteFirstStatus = 'PRESENT';
-    await provider.refreshSessionDashboard();
-    expect(provider.students[0].status, AttendanceStatus.late);
-    expect(provider.isAttendanceDraftConflicted('SE192001'), isTrue);
-    expect(await provider.saveAttendanceDraft(), isFalse);
-    expect(api.batchCalls, 0);
-
-    provider.toggleStudentStatus(
-      provider.students[0],
-      AttendanceStatus.present,
-    );
-    expect(provider.hasUnsavedAttendanceChanges, isFalse);
-    expect(provider.students[0].status, AttendanceStatus.present);
-  });
+      provider.toggleStudentStatus(
+        provider.students[0],
+        AttendanceStatus.present,
+      );
+      api.remoteFirstStatus = 'PRESENT';
+      await provider.refreshSessionDashboard();
+      expect(provider.students[0].status, AttendanceStatus.present);
+      expect(provider.hasUnsavedAttendanceChanges, isFalse);
+      expect(api.batchCalls, 0);
+    },
+  );
 
   test('switching slots while draft exists does not drop changes', () async {
     final api = _DraftApi();

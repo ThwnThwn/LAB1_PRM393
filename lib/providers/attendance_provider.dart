@@ -139,15 +139,11 @@ class AttendanceProvider extends ChangeNotifier {
 
   int get countPresent =>
       _students.where((s) => s.status == AttendanceStatus.present).length;
-  int get countLate =>
-      _students.where((s) => s.status == AttendanceStatus.late).length;
   int get countAbsent =>
       _students.where((s) => s.status == AttendanceStatus.absent).length;
-  int get countNotChecked =>
-      _students.where((s) => s.status == AttendanceStatus.notChecked).length;
   int get countTotal => _students.length;
   double get attendancePercentage =>
-      countTotal == 0 ? 0 : (countPresent + countLate) / countTotal * 100;
+      countTotal == 0 ? 0 : countPresent / countTotal * 100;
 
   // Week navigation
   String get currentWeekLabel {
@@ -301,7 +297,7 @@ class AttendanceProvider extends ChangeNotifier {
     if (_sessionOperationInProgress) return false;
     if (hasUnsavedAttendanceChanges || _savingAttendanceDraft) {
       _lastCheckinNotification =
-          '⚠️ Hãy lưu hoặc hủy các dòng đã sửa trước khi tạo phiên mới.';
+          '⚠️ Hãy lưu hoặc hủy các dòng đã sửa trước khi mở phiên.';
       notifyListeners();
       return false;
     }
@@ -978,9 +974,7 @@ class AttendanceProvider extends ChangeNotifier {
         student.status = remote?.status ?? originalStatus;
         student.checkinTime = remote?.checkinTime;
       } else {
-        final checkinTime =
-            newStatus == AttendanceStatus.present ||
-                newStatus == AttendanceStatus.late
+        final checkinTime = newStatus == AttendanceStatus.present
             ? student.checkinTime ?? DateTime.now()
             : null;
         _attendanceDrafts[student.rollNo] = _AttendanceDraft(
@@ -998,9 +992,7 @@ class AttendanceProvider extends ChangeNotifier {
     final previousStatus = student.status;
     _pendingAttendanceRollNos.add(student.rollNo);
     student.status = newStatus;
-    student.checkinTime =
-        (newStatus == AttendanceStatus.present ||
-            newStatus == AttendanceStatus.late)
+    student.checkinTime = newStatus == AttendanceStatus.present
         ? DateTime.now()
         : null;
     notifyListeners();
@@ -1014,7 +1006,7 @@ class AttendanceProvider extends ChangeNotifier {
     for (final student in _students) {
       if (!_attendanceDrafts.containsKey(student.rollNo)) continue;
       final remote = _latestServerStudents[student.rollNo];
-      student.status = remote?.status ?? AttendanceStatus.notChecked;
+      student.status = remote?.status ?? AttendanceStatus.absent;
       student.checkinTime = remote?.checkinTime;
     }
     _attendanceDrafts.clear();

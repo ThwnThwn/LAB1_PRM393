@@ -98,7 +98,7 @@ public sealed class AttendanceService(
                         normalizedClassCode,
                         load.Session.Snapshot.SubjectCode,
                         load.Session.Snapshot.Slot,
-                        AttendanceStatuses.NotChecked,
+                        AttendanceStatuses.Absent,
                         null,
                         string.Empty,
                         string.Empty)).ToArray();
@@ -150,94 +150,162 @@ public sealed class AttendanceService(
             return Failure<AttendanceSnapshot>("Thông tin lớp, môn học hoặc slot không hợp lệ.");
         }
 
-        var list = await sheetsStore.GetSessionsAsync(100, cancellationToken);
-        if (!list.Result.Success)
-        {
-            return StoreFailure<AttendanceSnapshot>(
-                $"{list.Result.Message} Hãy cập nhật Apps Script lên phiên bản Google-Sheets-only mới nhất.");
-        }
-        var existing = list.Sessions.FirstOrDefault(item =>
-            item.Snapshot.IsOpen &&
-            item.Snapshot.ClassCode.Equals(classCode, StringComparison.OrdinalIgnoreCase) &&
-            item.Snapshot.SubjectCode.Equals(subjectCode, StringComparison.OrdinalIgnoreCase) &&
-            item.Snapshot.Slot == request.Slot);
-        if (existing is not null)
-        {
-            return new ServiceResult<AttendanceSnapshot>(
-                true,
-                "Phiên điểm danh này đang mở.",
-                ApplyOtpState(existing.Snapshot));
-        }
-
-        var students = NormalizeStudents(request.Students);
-        if (students.Length == 0)
-        {
-            return Failure<AttendanceSnapshot>("Không thể mở phiên khi danh sách sinh viên đang trống.");
-        }
-        var roster = students.Select(student => new RosterStudentRecord(
-            student.RollNo!,
-            student.FullName!,
-            student.Email!)).ToArray();
-        var rosterWrite = await sheetsStore.SyncRosterAsync(classCode, roster, cancellationToken);
-        if (!rosterWrite.Success)
-        {
-            return StoreFailure<AttendanceSnapshot>(rosterWrite.Message);
-        }
-
         var now = DateTime.UtcNow;
-        var sessionId = Guid.NewGuid().ToString("N");
-        var records = roster.Select(student => new AttendanceRecord(
-            sessionId,
-            student.RollNo,
-            student.FullName,
-            student.Email,
-            classCode,
-            subjectCode,
-            request.Slot,
-            AttendanceStatuses.NotChecked,
-            null,
-            string.Empty,
-            string.Empty)).ToArray();
-        var snapshot = RebuildSnapshot(new AttendanceSnapshot(
-            "success",
-            sessionId,
-            classCode,
-            subjectCode,
-            request.Slot,
-            ParseDate(request.Date, now),
-            true,
-            now,
-            null,
-            request.LateAfterMinutes <= 0 ? 10 : request.LateAfterMinutes,
-            false,
-            null,
-            null,
-            records.Length,
-            new DashboardStats(0, 0, 0, 0, 0, 0),
-            records,
-            []), []);
-        var audits = new[]
+        var sessionDate = ParseDate(request.Date, now);
+        var date = DateOnly.ParseExact(sessionDate, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        var gate = GetSessionLock($"open:{classCode}:{subjectCode}:{request.Slot}:{sessionDate}");
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            CreateAudit(
-                sessionId,
-                string.Empty,
-                "SESSION_OPENED",
-                string.Empty,
-                string.Empty,
-                CleanActor(request.Actor),
-                $"Mở phiên {subjectCode} - {classCode}, Slot {request.Slot}"),
-        };
-        var save = await sheetsStore.SaveSessionAsync(
-            new StoredAttendanceSession(snapshot, audits, []),
-            cancellationToken);
-        if (!save.Success)
-        {
-            return StoreFailure<AttendanceSnapshot>(save.Message);
-        }
+            var list = await sheetsStore.GetSessionsAsync(
+                100,
+                cancellationToken,
+                classCode,
+                subjectCode,
+                request.Slot);
+            if (!list.Result.Success)
+            {
+                return StoreFailure<AttendanceSnapshot>(
+                    $"{list.Result.Message} Hãy cập nhật Apps Script lên phiên bản Google-Sheets-only mới nhất.");
+            }
 
-        otpService.Resume(sessionId);
-        await BroadcastAsync(sessionId, "SessionOpened", snapshot, cancellationToken);
-        return new ServiceResult<AttendanceSnapshot>(true, "Đã mở phiên điểm danh.", snapshot);
+            // One teaching slot owns one persistent session. Prefer an already
+            // open duplicate, otherwise reuse the most recently opened record.
+            var existing = list.Sessions
+                .Where(item =>
+                    item.Snapshot.ClassCode.Equals(classCode, StringComparison.OrdinalIgnoreCase) &&
+                    item.Snapshot.SubjectCode.Equals(subjectCode, StringComparison.OrdinalIgnoreCase) &&
+                    item.Snapshot.Slot == request.Slot &&
+                    SameVietnamCalendarDate(item.Snapshot.Date, date))
+                .OrderByDescending(item => item.Snapshot.IsOpen)
+                .ThenByDescending(item => item.Snapshot.OpenedAt)
+                .FirstOrDefault();
+            if (existing is not null)
+            {
+                if (existing.Snapshot.IsOpen)
+                {
+                    return new ServiceResult<AttendanceSnapshot>(
+                        true,
+                        "Phiên điểm danh này đang mở.",
+                        ApplyOtpState(existing.Snapshot));
+                }
+
+                var reopenedSnapshot = RebuildSnapshot(
+                    existing.Snapshot with
+                    {
+                        IsOpen = true,
+                        OpenedAt = now,
+                        ClosedAt = null,
+                        OtpPaused = false,
+                        PausedOtp = null,
+                        OtpRemainingSeconds = null,
+                    },
+                    existing.DeviceBindings);
+                var reopenedAudits = existing.AuditLogs.Append(CreateAudit(
+                    reopenedSnapshot.SessionId,
+                    string.Empty,
+                    "SESSION_REOPENED",
+                    string.Empty,
+                    string.Empty,
+                    CleanActor(request.Actor),
+                    $"Mở lại phiên {subjectCode} - {classCode}, Slot {request.Slot}, ngày {sessionDate}"))
+                    .ToArray();
+                var reopenSave = await sheetsStore.SaveSessionAsync(
+                    new StoredAttendanceSession(
+                        reopenedSnapshot,
+                        reopenedAudits,
+                        existing.DeviceBindings),
+                    cancellationToken);
+                if (!reopenSave.Success)
+                {
+                    return StoreFailure<AttendanceSnapshot>(reopenSave.Message);
+                }
+
+                otpService.Resume(reopenedSnapshot.SessionId);
+                await BroadcastAsync(
+                    reopenedSnapshot.SessionId,
+                    "SessionOpened",
+                    reopenedSnapshot,
+                    cancellationToken);
+                return new ServiceResult<AttendanceSnapshot>(
+                    true,
+                    "Đã mở lại phiên điểm danh đã lưu.",
+                    reopenedSnapshot);
+            }
+
+            var students = NormalizeStudents(request.Students);
+            if (students.Length == 0)
+            {
+                return Failure<AttendanceSnapshot>("Không thể mở phiên khi danh sách sinh viên đang trống.");
+            }
+            var roster = students.Select(student => new RosterStudentRecord(
+                student.RollNo!,
+                student.FullName!,
+                student.Email!)).ToArray();
+            var rosterWrite = await sheetsStore.SyncRosterAsync(classCode, roster, cancellationToken);
+            if (!rosterWrite.Success)
+            {
+                return StoreFailure<AttendanceSnapshot>(rosterWrite.Message);
+            }
+
+            var sessionId = CreateSessionId(classCode, subjectCode, request.Slot, sessionDate);
+            var records = roster.Select(student => new AttendanceRecord(
+                sessionId,
+                student.RollNo,
+                student.FullName,
+                student.Email,
+                classCode,
+                subjectCode,
+                request.Slot,
+                AttendanceStatuses.Absent,
+                null,
+                string.Empty,
+                string.Empty)).ToArray();
+            var snapshot = RebuildSnapshot(new AttendanceSnapshot(
+                "success",
+                sessionId,
+                classCode,
+                subjectCode,
+                request.Slot,
+                sessionDate,
+                true,
+                now,
+                null,
+                request.LateAfterMinutes <= 0 ? 10 : request.LateAfterMinutes,
+                false,
+                null,
+                null,
+                records.Length,
+                new DashboardStats(0, 0, 0, 0),
+                records,
+                []), []);
+            var audits = new[]
+            {
+                CreateAudit(
+                    sessionId,
+                    string.Empty,
+                    "SESSION_OPENED",
+                    string.Empty,
+                    string.Empty,
+                    CleanActor(request.Actor),
+                    $"Mở phiên {subjectCode} - {classCode}, Slot {request.Slot}, ngày {sessionDate}"),
+            };
+            var save = await sheetsStore.SaveSessionAsync(
+                new StoredAttendanceSession(snapshot, audits, []),
+                cancellationToken);
+            if (!save.Success)
+            {
+                return StoreFailure<AttendanceSnapshot>(save.Message);
+            }
+
+            otpService.Resume(sessionId);
+            await BroadcastAsync(sessionId, "SessionOpened", snapshot, cancellationToken);
+            return new ServiceResult<AttendanceSnapshot>(true, "Đã mở phiên điểm danh.", snapshot);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public async Task<ServiceResult<AttendanceSnapshot>> CloseSessionAsync(
@@ -268,24 +336,7 @@ public sealed class AttendanceService(
             var now = DateTime.UtcNow;
             var changedBy = CleanActor(actor);
             var audits = load.Session.AuditLogs.ToList();
-            var records = load.Session.Snapshot.Students.Select(student =>
-            {
-                if (student.Status != AttendanceStatuses.NotChecked) return student;
-                audits.Add(CreateAudit(
-                    sessionId,
-                    student.RollNo,
-                    "STATUS_CHANGED",
-                    AttendanceStatuses.NotChecked,
-                    AttendanceStatuses.Absent,
-                    changedBy,
-                    "Tự động đánh vắng khi đóng phiên"));
-                return student with
-                {
-                    Status = AttendanceStatuses.Absent,
-                    CheckinTime = null,
-                    Notes = "Tự động đánh vắng khi đóng phiên",
-                };
-            }).ToArray();
+            var records = load.Session.Snapshot.Students.ToArray();
             audits.Add(CreateAudit(
                 sessionId,
                 string.Empty,
@@ -455,9 +506,7 @@ public sealed class AttendanceService(
                     StatusCodes.Status409Conflict);
             }
 
-            var status = now > current.OpenedAt.AddMinutes(current.LateAfterMinutes)
-                ? AttendanceStatuses.Late
-                : AttendanceStatuses.Present;
+            const string status = AttendanceStatuses.Present;
             records[entryIndex] = entry with
             {
                 Email = email,
@@ -586,7 +635,7 @@ public sealed class AttendanceService(
             records[index] = entry with
             {
                 Status = normalizedStatus,
-                CheckinTime = normalizedStatus is AttendanceStatuses.Present or AttendanceStatuses.Late
+                CheckinTime = normalizedStatus == AttendanceStatuses.Present
                     ? entry.CheckinTime ?? DateTime.UtcNow
                     : null,
                 Notes = notes,
@@ -675,16 +724,20 @@ public sealed class AttendanceService(
                 if (roster.Count == 0)
                     return Failure<AttendanceSnapshot>("Lớp chưa có sinh viên trên Google Sheets.");
                 var now = DateTime.UtcNow;
-                var sessionId = Guid.NewGuid().ToString("N");
+                var sessionId = CreateSessionId(
+                    classCode,
+                    subjectCode,
+                    request.Slot,
+                    date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
                 var records = roster.Select(student => new AttendanceRecord(
                     sessionId, student.RollNo, student.FullName, student.Email,
-                    classCode, subjectCode, request.Slot, AttendanceStatuses.NotChecked,
+                    classCode, subjectCode, request.Slot, AttendanceStatuses.Absent,
                     null, string.Empty, string.Empty)).ToArray();
                 var initial = RebuildSnapshot(new AttendanceSnapshot(
                     "success", sessionId, classCode, subjectCode, request.Slot,
                     date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     false, now, now, 10, false, null, null,
-                    records.Length, new DashboardStats(0, 0, 0, 0, 0, 0), records, []), []);
+                    records.Length, new DashboardStats(0, 0, 0, 0), records, []), []);
                 stored = new StoredAttendanceSession(initial, [], []);
             }
 
@@ -719,7 +772,7 @@ public sealed class AttendanceService(
                 recordsToSave[index] = previous with
                 {
                     Status = status,
-                    CheckinTime = status is AttendanceStatuses.Present or AttendanceStatuses.Late
+                    CheckinTime = status == AttendanceStatuses.Present
                         ? previous.CheckinTime ?? DateTime.UtcNow : null,
                     Notes = "Giảng viên cập nhật thủ công (lưu hàng loạt)",
                 };
@@ -932,18 +985,24 @@ public sealed class AttendanceService(
         AttendanceSnapshot snapshot,
         IReadOnlyCollection<StoredDeviceBinding> bindings)
     {
-        var students = snapshot.Students.ToArray();
+        var students = snapshot.Students.Select(student =>
+        {
+            var status = AttendanceStatuses.Normalize(student.Status);
+            return student with
+            {
+                Status = status,
+                CheckinTime = status == AttendanceStatuses.Present
+                    ? student.CheckinTime
+                    : null,
+            };
+        }).ToArray();
         var present = students.Count(student => student.Status == AttendanceStatuses.Present);
-        var late = students.Count(student => student.Status == AttendanceStatuses.Late);
         var absent = students.Count(student => student.Status == AttendanceStatuses.Absent);
-        var notChecked = students.Count(student => student.Status == AttendanceStatuses.NotChecked);
         var stats = new DashboardStats(
             students.Length,
             present,
-            late,
             absent,
-            notChecked,
-            students.Length == 0 ? 0 : (present + late) * 100.0 / students.Length);
+            students.Length == 0 ? 0 : present * 100.0 / students.Length);
         var publicBindings = bindings.Select(binding => new DeviceBindingRecord(
             binding.Id,
             binding.DeviceCode,
@@ -1018,6 +1077,17 @@ public sealed class AttendanceService(
     {
         var payload = $"{email}|{sessionId}|{rollNo}|{checkinTime:O}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload)))[..16];
+    }
+
+    private static string CreateSessionId(
+        string classCode,
+        string subjectCode,
+        int slot,
+        string date)
+    {
+        var key = $"{classCode}|{subjectCode}|{slot}|{date}";
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..32]
+            .ToLowerInvariant();
     }
 
     private static string FormatCsvDateTime(DateTime? value) =>

@@ -124,7 +124,7 @@ void main() {
     },
   );
 
-  testWidgets('a stored closed session is labeled separately from a new one', (
+  testWidgets('a stored closed session offers to reopen the same session', (
     tester,
   ) async {
     final provider = AttendanceProvider(
@@ -152,7 +152,7 @@ void main() {
       ),
     );
     expect(find.text('Phiên điểm danh đã đóng'), findsOneWidget);
-    expect(find.text('Tạo phiên mới'), findsOneWidget);
+    expect(find.text('Mở lại phiên'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
     provider.dispose();
   });

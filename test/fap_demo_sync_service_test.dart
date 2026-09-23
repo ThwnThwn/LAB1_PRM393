@@ -11,45 +11,39 @@ void main() {
     status: status,
   );
 
-  test('maps present and late to FAP present', () {
+  test('maps the binary attendance states to FAP marks', () {
     final roster = [
-      student('SE001', AttendanceStatus.notChecked),
-      student('SE002', AttendanceStatus.notChecked),
+      student('SE001', AttendanceStatus.absent),
+      student('SE002', AttendanceStatus.absent),
     ];
     final result = FapDemoSyncService.matchClosedSession(
       roster: roster,
       attendanceRecords: [
         student('se001', AttendanceStatus.present),
-        student('SE002', AttendanceStatus.late),
+        student('SE002', AttendanceStatus.absent),
       ],
     );
 
     expect(result.marksByRollNo['SE001'], FapDemoMark.present);
-    expect(result.marksByRollNo['SE002'], FapDemoMark.present);
+    expect(result.marksByRollNo['SE002'], FapDemoMark.absent);
     expect(result.matchedCount, 2);
     expect(result.unmatchedRollNos, isEmpty);
   });
 
-  test('maps absent and closed-session not checked to FAP absent', () {
-    final roster = [
-      student('SE003', AttendanceStatus.notChecked),
-      student('SE004', AttendanceStatus.notChecked),
-    ];
-    final result = FapDemoSyncService.matchClosedSession(
-      roster: roster,
-      attendanceRecords: [
-        student('SE003', AttendanceStatus.absent),
-        student('SE004', AttendanceStatus.notChecked),
-      ],
+  test('normalizes legacy late and not-checked values to binary states', () {
+    expect(
+      AttendanceStatusExtension.fromString('LATE'),
+      AttendanceStatus.present,
     );
-
-    expect(result.marksByRollNo['SE003'], FapDemoMark.absent);
-    expect(result.marksByRollNo['SE004'], FapDemoMark.absent);
+    expect(
+      AttendanceStatusExtension.fromString('NOT CHECKED'),
+      AttendanceStatus.absent,
+    );
   });
 
   test('keeps roster student unmarked when source MSSV is missing', () {
     final result = FapDemoSyncService.matchClosedSession(
-      roster: [student('SE005', AttendanceStatus.notChecked)],
+      roster: [student('SE005', AttendanceStatus.absent)],
       attendanceRecords: [student('SE999', AttendanceStatus.present)],
     );
 

@@ -86,25 +86,18 @@ function initials(fullName, rollNo) {
 }
 
 function normalizeStatus(status) {
-  const value = String(status || "NOT CHECKED").toUpperCase();
-  return ["PRESENT", "LATE", "ABSENT", "NOT CHECKED"].includes(value)
-    ? value
-    : "NOT CHECKED";
+  const value = String(status || "ABSENT").toUpperCase();
+  return value === "PRESENT" || value === "LATE" ? "PRESENT" : "ABSENT";
 }
 
 function markForStatus(status) {
-  const normalized = normalizeStatus(status);
-  if (normalized === "PRESENT" || normalized === "LATE") return "PRESENT";
-  if (normalized === "ABSENT") return "ABSENT";
-  return "";
+  return normalizeStatus(status);
 }
 
 function statusPresentation(status) {
   switch (normalizeStatus(status)) {
     case "PRESENT": return { label: "Có mặt", className: "present" };
-    case "LATE": return { label: "Đi trễ", className: "late" };
-    case "ABSENT": return { label: "Vắng", className: "absent" };
-    default: return { label: "Chưa điểm danh", className: "neutral" };
+    default: return { label: "Vắng", className: "absent" };
   }
 }
 
@@ -438,9 +431,7 @@ function renderSession() {
   const stats = snapshot?.stats || {};
   setText("#stat-total", stats.total ?? snapshot?.count ?? 0);
   setText("#stat-present", stats.present ?? 0);
-  setText("#stat-late", stats.late ?? 0);
   setText("#stat-absent", stats.absent ?? 0);
-  setText("#stat-pending", stats.notChecked ?? snapshot?.count ?? 0);
 }
 
 function filteredStudents() {

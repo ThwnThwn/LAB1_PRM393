@@ -2,13 +2,19 @@ namespace Attendance.Api.Models;
 
 public static class AttendanceStatuses
 {
-    public const string NotChecked = "NOT CHECKED";
     public const string Present = "PRESENT";
-    public const string Late = "LATE";
     public const string Absent = "ABSENT";
 
     public static readonly HashSet<string> All =
-        new(StringComparer.OrdinalIgnoreCase) { NotChecked, Present, Late, Absent };
+        new(StringComparer.OrdinalIgnoreCase) { Present, Absent };
+
+    // Keep existing Sheets usable after the app moves to a binary status model.
+    public static string Normalize(string? status) =>
+        status?.Trim().ToUpperInvariant() switch
+        {
+            Present or "LATE" => Present,
+            _ => Absent,
+        };
 }
 
 public sealed record StudentSeed(string? RollNo, string? FullName, string? Email);
@@ -105,9 +111,7 @@ public sealed record AttendanceRecord(
 public sealed record DashboardStats(
     int Total,
     int Present,
-    int Late,
     int Absent,
-    int NotChecked,
     double AttendancePercentage);
 
 public sealed record AttendanceSnapshot(
