@@ -5,6 +5,8 @@ import 'package:flutter/scheduler.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:provider/provider.dart';
 import '../providers/attendance_provider.dart';
+import '../providers/otp_provider.dart';
+import '../services/otp_service.dart';
 import '../services/student_portal_url_service.dart';
 
 class QrGeneratorWidget extends StatefulWidget {
@@ -49,13 +51,18 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AttendanceProvider>(context);
+    final otpProvider = Provider.of<OtpProvider?>(context);
     final session = provider.currentSession;
     if (!provider.isSessionOpen || provider.serverSessionId == null) {
       return _buildClosedState(context, provider);
     }
 
-    final isPaused = provider.isOtpPaused;
-    final liveOtp = session.activeOtp;
+    final isPaused = otpProvider?.isPaused ?? provider.isOtpPaused;
+    final liveOtp =
+        otpProvider?.activeOtp ??
+        (session.activeOtp.isNotEmpty
+            ? session.activeOtp
+            : OtpService.generateOtpForTimeWindow());
 
     // The QR identifies a session and stays stable while the OTP rotates.
     // Session metadata is loaded from the server after the phone opens it.
@@ -308,7 +315,8 @@ class _QrGeneratorWidgetState extends State<QrGeneratorWidget> {
             // Ultra-smooth 60FPS countdown timer & aligned progress card
             _SmoothCountdownTimerWidget(
               isPaused: isPaused,
-              frozenSecondsLeft: session.otpRemainingSeconds,
+              frozenSecondsLeft:
+                  otpProvider?.remainingSeconds ?? session.otpRemainingSeconds,
             ),
             const SizedBox(height: 12),
 

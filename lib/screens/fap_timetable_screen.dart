@@ -549,7 +549,9 @@ class FapTimetableScreen extends StatelessWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final slotTime = FapClassSlot.getSlotTimeRange(slotNumber);
 
-    return IntrinsicHeight(
+    // Fix 5: SizedBox instead of IntrinsicHeight to avoid double layout pass.
+    return SizedBox(
+      height: 98,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [

@@ -2,8 +2,8 @@ import 'package:csv/csv.dart';
 
 import '../models/student.dart';
 
-class StudentCsvImportResult {
-  const StudentCsvImportResult({
+class StudentRosterImportResult {
+  const StudentRosterImportResult({
     required this.students,
     this.skippedRows = 0,
     this.duplicateRows = 0,
@@ -85,7 +85,7 @@ class StudentCsvImportService {
     'trạngthái',
   };
 
-  static StudentCsvImportResult parse(
+  static StudentRosterImportResult parse(
     String rawCsv, {
     required String fallbackGroup,
   }) {
@@ -113,23 +113,52 @@ class StudentCsvImportService {
       shouldParseNumbers: false,
       allowInvalid: false,
     ).convert<dynamic>(content);
+    return parseRows(
+      rows,
+      fallbackGroup: fallbackGroup,
+      sourceLabel: 'File CSV',
+    );
+  }
+
+  /// Converts a two-dimensional table into a normalized student roster.
+  ///
+  /// CSV and XLSX use this shared path so header aliases, duplicate handling,
+  /// default values and warnings remain identical across both formats.
+  static StudentRosterImportResult parseRows(
+    List<List<dynamic>> rows, {
+    required String fallbackGroup,
+    String sourceLabel = 'File dữ liệu',
+    bool requireHeader = false,
+  }) {
     final nonEmptyRows = rows
         .where((row) => row.any((cell) => _cell(cell).isNotEmpty))
         .toList();
     if (nonEmptyRows.isEmpty) {
-      throw const FormatException('File CSV không có dữ liệu.');
+      throw FormatException('$sourceLabel không có dữ liệu.');
     }
 
-    final columns = _CsvColumns.fromHeader(nonEmptyRows.first);
+    final headerIndex = _findHeaderRowIndex(nonEmptyRows);
+    if (requireHeader && headerIndex == null) {
+      throw FormatException(
+        '$sourceLabel thiếu hàng tiêu đề có cột mã sinh viên và họ tên.',
+      );
+    }
+
+    final tableRows = headerIndex == null
+        ? nonEmptyRows
+        : nonEmptyRows.sublist(headerIndex);
+    final columns = _CsvColumns.fromHeader(tableRows.first);
     final hasHeader = columns.looksLikeHeader;
     if (hasHeader && columns.rollNo == null) {
-      throw const FormatException(
-        'CSV thiếu cột mã sinh viên (StudentCode, RollNo hoặc MSSV).',
+      throw FormatException(
+        '$sourceLabel thiếu cột mã sinh viên '
+        '(StudentCode, RollNo hoặc MSSV).',
       );
     }
     if (hasHeader && !columns.hasStudentName) {
-      throw const FormatException(
-        'CSV thiếu cột họ tên (FullName) hoặc các cột thành phần tên.',
+      throw FormatException(
+        '$sourceLabel thiếu cột họ tên (FullName) '
+        'hoặc các cột thành phần tên.',
       );
     }
 
@@ -138,8 +167,8 @@ class StudentCsvImportService {
     var skippedRows = 0;
     var duplicateRows = 0;
 
-    for (var index = hasHeader ? 1 : 0; index < nonEmptyRows.length; index++) {
-      final row = nonEmptyRows[index];
+    for (var index = hasHeader ? 1 : 0; index < tableRows.length; index++) {
+      final row = tableRows[index];
       final rollNo = _cellAt(row, hasHeader ? columns.rollNo : 0).toUpperCase();
       final fullName = hasHeader
           ? _readFullName(row, columns)
@@ -171,16 +200,25 @@ class StudentCsvImportService {
     }
 
     if (students.isEmpty) {
-      throw const FormatException(
-        'Không tìm thấy sinh viên hợp lệ trong file CSV.',
+      throw FormatException(
+        'Không tìm thấy sinh viên hợp lệ trong ${sourceLabel.toLowerCase()}.',
       );
     }
 
-    return StudentCsvImportResult(
+    return StudentRosterImportResult(
       students: students,
       skippedRows: skippedRows,
       duplicateRows: duplicateRows,
     );
+  }
+
+  static int? _findHeaderRowIndex(List<List<dynamic>> rows) {
+    final limit = rows.length < 30 ? rows.length : 30;
+    for (var index = 0; index < limit; index++) {
+      final columns = _CsvColumns.fromHeader(rows[index]);
+      if (columns.rollNo != null && columns.hasStudentName) return index;
+    }
+    return null;
   }
 
   static String _detectDelimiter(String content) {

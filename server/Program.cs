@@ -22,6 +22,7 @@ builder.Services.AddSingleton<GoogleSheetsPrimaryStore>();
 builder.Services.AddSingleton<AttendanceUpdateStream>();
 builder.Services.AddSingleton<OtpService>();
 builder.Services.AddSingleton<DeviceIdentityService>();
+builder.Services.AddSingleton<TimetableOcrService>();
 builder.Services.AddSignalR();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -204,6 +205,85 @@ app.MapPut("/api/config/google-sheets", async (
         ? StatusCodes.Status200OK
         : StatusCodes.Status400BadRequest);
 });
+
+app.MapPost("/api/timetable/import-image", async (
+    HttpRequest request,
+    TimetableOcrService ocrService,
+    CancellationToken cancellationToken) =>
+{
+    if (!request.HasFormContentType)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = "Yêu cầu phải chứa ảnh thời khóa biểu.",
+        });
+    }
+
+    var form = await request.ReadFormAsync(cancellationToken);
+    var image = form.Files.GetFile("image") ?? form.Files.FirstOrDefault();
+    if (image is null || image.Length == 0)
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = "Chưa chọn ảnh thời khóa biểu.",
+        });
+    }
+
+    const long maxImageBytes = 12 * 1024 * 1024;
+    if (image.Length > maxImageBytes)
+    {
+        return Results.Json(new
+        {
+            success = false,
+            message = "Ảnh vượt quá giới hạn 12 MB.",
+        }, statusCode: StatusCodes.Status413PayloadTooLarge);
+    }
+
+    var extension = Path.GetExtension(image.FileName).ToLowerInvariant();
+    var supportedExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp",
+    };
+    if (!supportedExtensions.Contains(extension))
+    {
+        return Results.Json(new
+        {
+            success = false,
+            message = "Định dạng ảnh chưa được hỗ trợ. Hãy dùng PNG, JPG, BMP, TIFF hoặc WebP.",
+        }, statusCode: StatusCodes.Status415UnsupportedMediaType);
+    }
+
+    try
+    {
+        await using var stream = image.OpenReadStream();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory, cancellationToken);
+        var result = await ocrService.RecognizeAsync(memory.ToArray(), cancellationToken);
+        return Results.Ok(new
+        {
+            success = true,
+            fileName = Path.GetFileName(image.FileName),
+            result.RawText,
+            result.Confidence,
+            result.Candidates,
+            result.Warnings,
+        });
+    }
+    catch (OperationCanceledException)
+    {
+        return Results.StatusCode(499);
+    }
+    catch (Exception error)
+    {
+        return Results.Json(new
+        {
+            success = false,
+            message = $"Không thể đọc ảnh thời khóa biểu: {error.Message}",
+        }, statusCode: StatusCodes.Status422UnprocessableEntity);
+    }
+}).DisableAntiforgery();
 
 app.MapPost("/api/sessions", async (
     OpenSessionRequest request,

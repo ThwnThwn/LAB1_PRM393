@@ -1,157 +1,93 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fap_attendance_app/main.dart';
-import 'package:fap_attendance_app/models/student.dart';
 
 void main() {
-  testWidgets(
-    'Only today keeps the orange day header after selecting another day',
-    (WidgetTester tester) async {
-      tester.view.physicalSize = const Size(1920, 1080);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await tester.pumpWidget(const FapAttendanceApp());
-      final today = DateTime.now().weekday;
-      final otherDay = today == 4 ? 1 : 4;
-
-      Color headerBorderColor(int day) {
-        final header = find.byKey(ValueKey('day-header-$day'));
-        final container = find
-            .descendant(of: header, matching: find.byType(Container))
-            .first;
-        final decoration =
-            tester.widget<Container>(container).decoration! as BoxDecoration;
-        return (decoration.border! as Border).top.color;
-      }
-
-      const orange = Color(0xFFF36F21);
-      expect(headerBorderColor(today), orange);
-      expect(headerBorderColor(otherDay), isNot(orange));
-
-      final classCell = find.byKey(ValueKey('day-slot-$otherDay-1'));
-      await tester.tap(
-        find.descendant(of: classCell, matching: find.text('PRN232')),
-      );
-      await tester.pump();
-
-      expect(headerBorderColor(today), orange);
-      expect(headerBorderColor(otherDay), isNot(orange));
-    },
-  );
-
-  testWidgets('Selecting a timetable slot updates the active class', (
-    WidgetTester tester,
-  ) async {
+  void configureDesktopViewport(WidgetTester tester) {
     tester.view.physicalSize = const Size(1920, 1080);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
+  }
 
+  BoxDecoration calendarDayDecoration(WidgetTester tester, Finder dayFinder) {
+    final container = find
+        .descendant(of: dayFinder, matching: find.byType(Container))
+        .first;
+    return tester.widget<Container>(container).decoration! as BoxDecoration;
+  }
+
+  testWidgets('calendar lets the lecturer select a different teaching date', (
+    tester,
+  ) async {
+    configureDesktopViewport(tester);
     await tester.pumpWidget(const FapAttendanceApp());
 
-    expect(find.text('FAP ATTENDANCE'), findsOneWidget);
-    expect(find.text('Chưa chọn ca dạy'), findsWidgets);
-
-    final slotHeaderRect = tester.getRect(
-      find.byKey(const ValueKey('slot-header-cell')),
+    final now = DateTime.now();
+    final anotherDay = now.day == 1 ? 2 : 1;
+    final todayFinder = find.byKey(
+      ValueKey('calendar-day-${now.year}-${now.month}-${now.day}'),
     );
-    final firstSlotRect = tester.getRect(
-      find.byKey(const ValueKey('slot-row-cell-1')),
+    final anotherDayFinder = find.byKey(
+      ValueKey('calendar-day-${now.year}-${now.month}-$anotherDay'),
     );
-    expect(firstSlotRect.left, closeTo(slotHeaderRect.left, 0.01));
-    expect(firstSlotRect.right, closeTo(slotHeaderRect.right, 0.01));
-    expect(find.byKey(const ValueKey('slot-row-cell-8')), findsOneWidget);
 
-    for (var day = 1; day <= 7; day++) {
-      final headerRect = tester.getRect(
-        find.byKey(ValueKey('day-header-$day')),
-      );
-      final cellRect = tester.getRect(find.byKey(ValueKey('day-slot-$day-1')));
-      expect(cellRect.left, closeTo(headerRect.left, 0.01));
-      expect(cellRect.right, closeTo(headerRect.right, 0.01));
-    }
-
-    await tester.tap(find.text('PRN232').first);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
-
-    expect(find.text('PRN232 - SE1917'), findsOneWidget);
-
-    await tester.tap(find.text('Bắt đầu điểm danh QR (10s OTP)'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+    expect(todayFinder, findsOneWidget);
     expect(
-      find.text(
-        'Không tải được dữ liệu từ Google Sheets. Hãy kiểm tra kết nối rồi chọn lại ca.',
-      ),
-      findsOneWidget,
+      calendarDayDecoration(tester, todayFinder).color,
+      const Color(0xFFF27023),
     );
 
-    await tester.tap(find.text('Danh sách sinh viên'));
+    await tester.tap(anotherDayFinder);
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 300));
+
     expect(
-      find.text(
-        'Không tải được dữ liệu từ Google Sheets. Hãy kiểm tra kết nối rồi chọn lại ca.',
-      ),
-      findsOneWidget,
+      calendarDayDecoration(tester, anotherDayFinder).color,
+      const Color(0xFFF27023),
     );
+    expect(find.text('NGÀY ĐÃ CHỌN'), findsOneWidget);
+  });
+
+  testWidgets('opening a course selects its timetable slot and roster tab', (
+    tester,
+  ) async {
+    configureDesktopViewport(tester);
+    await tester.pumpWidget(const FapAttendanceApp());
+
+    expect(find.text('FPT EduPulse'), findsOneWidget);
+    expect(find.text('Chưa chọn ca dạy'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('open-course-PRN232-SE1917')));
+    await tester.pump();
+
+    expect(find.text('PRN232 - SE1917'), findsWidgets);
     expect(
       find.text(
         'Có thể sửa nhiều dòng trước khi mở phiên QR. Bấm Lưu để ghi một lần lên Google Sheets.',
       ),
       findsOneWidget,
     );
-    final statusControls = tester.widgetList<DropdownButton<AttendanceStatus>>(
-      find.byType(DropdownButton<AttendanceStatus>),
-    );
-    expect(statusControls, isEmpty);
   });
 
-  testWidgets('Class code filter keeps only the selected teaching group', (
-    WidgetTester tester,
+  testWidgets('global search filters the dashboard course list', (
+    tester,
   ) async {
-    tester.view.physicalSize = const Size(1920, 1080);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
+    configureDesktopViewport(tester);
     await tester.pumpWidget(const FapAttendanceApp());
-    expect(find.text('PRN232'), findsWidgets);
-    expect(find.text('EXE201'), findsOneWidget);
-    expect(find.text('SWP391'), findsNothing);
-    expect(find.text('MLN111'), findsNothing);
-    expect(find.text('ITE302c'), findsNothing);
+
+    await tester.enterText(
+      find.byKey(const ValueKey('global-search-field')),
+      'EXE201',
+    );
+    await tester.pump();
+
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('day-slot-2-1')),
-        matching: find.text('HCM202'),
-      ),
+      find.byKey(const ValueKey('course-card-EXE201-SE1919')),
       findsOneWidget,
     );
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('day-slot-5-1')),
-        matching: find.text('HCM202'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('day-slot-1-4')),
-        matching: find.text('HCM202'),
-      ),
+      find.byKey(const ValueKey('course-card-PRN232-SE1917')),
       findsNothing,
     );
-
-    await tester.tap(find.byKey(const ValueKey('class-code-filter')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('SE1919').last);
-    await tester.pumpAndSettle();
-
-    expect(find.text('EXE201'), findsOneWidget);
-    expect(find.text('PRN232'), findsNothing);
   });
 }

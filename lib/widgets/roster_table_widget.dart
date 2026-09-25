@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
-import 'dart:convert';
 import '../providers/attendance_provider.dart';
 import '../models/student.dart';
 
@@ -10,28 +9,28 @@ class RosterTableWidget extends StatelessWidget {
 
   static const double _statusColumnWidth = 146;
 
-  void _handlePickCsvFile(
+  void _handlePickStudentFile(
     BuildContext context,
     AttendanceProvider provider,
   ) async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'txt'],
+        allowedExtensions: ['csv', 'txt', 'xlsx'],
         withData: true,
       );
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
-        String content = '';
-        if (file.bytes != null) {
-          content = utf8.decode(file.bytes!);
-        }
-        if (content.isEmpty) {
-          throw const FormatException('File CSV không có dữ liệu.');
+        final bytes = file.bytes;
+        if (bytes == null || bytes.isEmpty) {
+          throw const FormatException('File không có dữ liệu.');
         }
         if (context.mounted) {
-          final importResult = await provider.importCsvContent(content);
+          final importResult = await provider.importStudentFile(
+            bytes,
+            file.name,
+          );
           if (!context.mounted) return;
           final warningParts = <String>[
             if (importResult.skippedRows > 0)
@@ -57,7 +56,7 @@ class RosterTableWidget extends StatelessWidget {
         final message = e is FormatException ? e.message : e.toString();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Không thể import CSV: $message'),
+            content: Text('Không thể import danh sách sinh viên: $message'),
             backgroundColor: Colors.red,
           ),
         );
@@ -163,11 +162,11 @@ class RosterTableWidget extends StatelessWidget {
               ),
               const SizedBox(width: 14),
 
-              // Import CSV File Button
+              // Import CSV/XLSX File Button
               ElevatedButton.icon(
-                onPressed: () => _handlePickCsvFile(context, provider),
+                onPressed: () => _handlePickStudentFile(context, provider),
                 icon: const Icon(Icons.file_upload_outlined, size: 18),
-                label: const Text('Import CSV'),
+                label: const Text('Import CSV/XLSX'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF1B2A4A),
                   foregroundColor: Colors.white,

@@ -7,7 +7,9 @@
 ## Chức năng hiện có
 
 - Thời khóa biểu tuần và chọn ca dạy đang thao tác.
-- Import danh sách sinh viên từ CSV hoặc cấu hình Google Sheets.
+- Nhập thời khóa biểu từ ảnh PNG/JPG bằng OCR Anh–Việt chạy trong backend cục bộ;
+  cho phép sửa và chọn từng ca trước khi thay thế hoặc gộp vào lịch hiện tại.
+- Import danh sách sinh viên từ CSV, Excel `.xlsx` hoặc cấu hình Google Sheets.
 - Mở và đóng từng phiên điểm danh.
 - Mỗi lớp, môn, ngày và slot chỉ có một phiên; mở lại sẽ dùng cùng `SessionId` và giữ nguyên kết quả.
 - QR và OTP 6 số tự đổi sau mỗi 10 giây.
@@ -154,6 +156,18 @@ flutter run -d windows `
 
 Nếu chỉ test trên cùng máy, có thể dùng `http://127.0.0.1:8080`. Không đưa `localhost` vào QR cho điện thoại vì `localhost` trên điện thoại chính là điện thoại, không phải máy giảng viên.
 
+### Nhập thời khóa biểu từ ảnh
+
+1. Tại **Bảng điều khiển**, bấm **Nhập ảnh TKB**.
+2. Chọn ảnh chụp hoặc ảnh màn hình thời khóa biểu (PNG, JPG, BMP, TIFF hoặc WebP,
+   tối đa 12 MB).
+3. Kiểm tra và sửa mã môn, mã lớp, thứ, slot, phòng ở màn hình xem trước.
+4. Chọn **Thay thế thời khóa biểu hiện tại** hoặc tắt tùy chọn này để gộp lịch,
+   rồi bấm **Nhập ca**.
+
+Ảnh được OCR bởi Tesseract ngay trong backend chạy trên máy; không gửi tới dịch vụ
+OCR bên ngoài. Lịch đã xác nhận được lưu cục bộ và tự khôi phục khi mở lại ứng dụng.
+
 ## Luồng demo đề xuất
 
 1. Trên trang **Thời khóa biểu tuần**, chọn tuần và lọc **Mã lớp điểm danh**
@@ -290,7 +304,8 @@ Không commit cache điểm danh, URL Apps Script, credential Google hoặc dữ
 ## Giới hạn hiện tại
 
 - Dữ liệu thời khóa biểu phục vụ demo và được seed sẵn; hệ thống chủ động không đăng nhập hay lấy dữ liệu từ FAP chính thức.
-- Luồng import ổn định hiện tại là CSV; đọc trực tiếp file Excel `.xlsx` chưa được hoàn thiện.
+- File Excel `.xlsx` phải có một sheet chứa hàng tiêu đề với cột mã sinh viên
+  (`StudentCode`, `RollNo` hoặc `MSSV`) và cột họ tên (`FullName` hoặc các cột tên thành phần).
 - API local chưa có cơ chế đăng nhập/phân quyền.
 - HTTP trong mạng LAN phù hợp demo, chưa phù hợp triển khai Internet.
 - Nhận diện thiết bị trên web giúp chặn các trường hợp dùng chung điện thoại thông

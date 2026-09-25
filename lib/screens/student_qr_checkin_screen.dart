@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/attendance_provider.dart';
+import '../providers/otp_provider.dart';
 import '../models/student.dart';
 
 /// Modern Material 3 Student QR Scan Result & Attendance Check-in Screen.
@@ -25,8 +26,8 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
     super.initState();
     // Auto-fill active OTP from QR code
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final provider = Provider.of<AttendanceProvider>(context, listen: false);
-      _otpController.text = provider.currentSession.activeOtp;
+      final otpProvider = Provider.of<OtpProvider>(context, listen: false);
+      _otpController.text = otpProvider.activeOtp;
     });
   }
 
@@ -64,11 +65,11 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
   }
 
   void _resetForNewScan() {
-    final provider = Provider.of<AttendanceProvider>(context, listen: false);
+    final otpProvider = Provider.of<OtpProvider>(context, listen: false);
     setState(() {
       _checkinResult = null;
       _digitalTicketHash = null;
-      _otpController.text = provider.currentSession.activeOtp;
+      _otpController.text = otpProvider.activeOtp;
     });
   }
 
@@ -77,13 +78,13 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final provider = Provider.of<AttendanceProvider>(context);
-    final session = provider.currentSession;
-    final secondsLeft = session.otpRemainingSeconds;
+    final otpProvider = Provider.of<OtpProvider>(context);
+    final secondsLeft = otpProvider.remainingSeconds;
 
     // Keep OTP synced if auto-filled
     if (_isAutoFilledFromQr && _checkinResult == null) {
-      if (_otpController.text != session.activeOtp) {
-        _otpController.text = session.activeOtp;
+      if (_otpController.text != otpProvider.activeOtp) {
+        _otpController.text = otpProvider.activeOtp;
       }
     }
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../models/attendance_session.dart';
+import '../models/fap_class_slot.dart';
 import '../models/student.dart';
 import 'runtime_environment.dart';
 
@@ -249,6 +250,39 @@ class AttendanceApiService {
       '/api/sessions/${Uri.encodeComponent(sessionId)}/devices/$bindingId/release',
       {'actor': 'Giảng viên', 'reason': reason},
     );
+  }
+
+  Future<TimetableOcrResult> importTimetableImage({
+    required List<int> bytes,
+    required String fileName,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/timetable/import-image'),
+    );
+    if (_teacherToken.isNotEmpty) {
+      request.headers['X-Attendance-Teacher-Token'] = _teacherToken;
+    }
+    request.files.add(
+      http.MultipartFile.fromBytes('image', bytes, filename: fileName),
+    );
+
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+    final decoded = response.bodyBytes.isEmpty
+        ? <String, dynamic>{}
+        : jsonDecode(utf8.decode(response.bodyBytes));
+    final payload = decoded is Map
+        ? Map<String, dynamic>.from(decoded)
+        : <String, dynamic>{};
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw AttendanceApiException(
+        payload['message']?.toString() ??
+            'Không thể nhận diện ảnh (${response.statusCode}).',
+        response.statusCode,
+      );
+    }
+    return TimetableOcrResult.fromJson(payload);
   }
 
   Future<Map<String, dynamic>> _sendJson(

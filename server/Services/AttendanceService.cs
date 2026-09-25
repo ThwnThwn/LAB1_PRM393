@@ -943,6 +943,7 @@ public sealed class AttendanceService(
         var snapshot = await GetSnapshotAsync(sessionId, cancellationToken);
         if (snapshot is null) return null;
 
+        var sessionDate = FormatSessionDate(snapshot.Date);
         var csv = new StringBuilder();
         csv.AppendLine("RollNo,FullName,Email,ClassCode,SubjectCode,Slot,Date,Status,CheckinTime,Notes");
         foreach (var student in snapshot.Students)
@@ -955,14 +956,14 @@ public sealed class AttendanceService(
                 EscapeCsv(student.ClassCode),
                 EscapeCsv(student.SubjectCode),
                 student.Slot.ToString(CultureInfo.InvariantCulture),
-                EscapeCsv(snapshot.Date),
+                EscapeCsv(sessionDate),
                 EscapeCsv(student.Status),
                 EscapeCsv(FormatCsvDateTime(student.CheckinTime)),
                 EscapeCsv(student.Notes),
             }));
         }
         var content = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv.ToString())).ToArray();
-        return (content, $"attendance-{snapshot.SubjectCode}-{snapshot.ClassCode}-slot{snapshot.Slot}-{snapshot.Date}.csv");
+        return (content, $"attendance-{snapshot.SubjectCode}-{snapshot.ClassCode}-slot{snapshot.Slot}-{sessionDate}.csv");
     }
 
     private AttendanceSnapshot ApplyOtpState(AttendanceSnapshot snapshot)
@@ -1092,6 +1093,20 @@ public sealed class AttendanceService(
 
     private static string FormatCsvDateTime(DateTime? value) =>
         value?.ToLocalTime().ToString("dd/MM/yyyy HH:mm:ss", CultureInfo.InvariantCulture) ?? string.Empty;
+
+    private static string FormatSessionDate(string? value)
+    {
+        if (DateOnly.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var plainDate))
+        {
+            return plainDate.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+                   DateTimeStyles.AssumeUniversal, out var instant)
+            ? instant.ToOffset(TimeSpan.FromHours(7)).ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+            : "unknown-date";
+    }
 
     private static string EscapeCsv(string value) =>
         value.IndexOfAny([',', '"', '\r', '\n']) < 0

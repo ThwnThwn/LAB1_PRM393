@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:csv/csv.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/student.dart';
 import '../models/attendance_session.dart';
 import '../models/fap_class_slot.dart';
@@ -10,19 +13,22 @@ import '../services/attendance_api_service.dart';
 import '../services/attendance_session_matcher.dart';
 import '../services/attendance_live_service.dart';
 import '../services/student_csv_import_service.dart';
+import '../services/student_roster_import_service.dart';
+import 'otp_provider.dart';
 
 class AttendanceProvider extends ChangeNotifier {
+  static const String _timetablePreferenceKey =
+      'fap_attendance_teacher_timetable_v1';
   late AttendanceSession _currentSession;
   List<Student> _students = [];
-  Timer? _otpTimer;
   Timer? _dashboardPollTimer;
   final GoogleSheetsService _sheetsService = GoogleSheetsService();
   final AttendanceApiService _attendanceApi;
   final AttendanceLiveService _liveService;
+  OtpProvider? _otpProvider;
   bool _sessionOperationInProgress = false;
   bool _loadingSelectedSession = false;
   bool _refreshingDashboard = false;
-  bool _otpRotationPaused = false;
   bool _otpPauseOperationInProgress = false;
   Future<void>? _rosterLoadFuture;
   List<Map<String, dynamic>> _auditLogs = [];
@@ -36,6 +42,17 @@ class AttendanceProvider extends ChangeNotifier {
   bool _savingAttendanceDraft = false;
   int _draftSaveGeneration = 0;
   bool _sheetsReachable = false;
+
+  // --- Cache fields (Fix 3) ---
+  int _studentsVersion = 0;
+  List<Student>? _cachedFilteredStudents;
+  String _cachedSearchQuery = '';
+  AttendanceStatus? _cachedFilterStatus;
+  int _cachedFilterVersion = -1;
+  int _cachedCountPresent = 0;
+  int _cachedCountAbsent = 0;
+  int _cachedCountVersion = -1;
+  List<String>? _cachedClassCodes;
   String? _sheetsConfigurationMessage;
 
   String _searchQuery = '';
@@ -44,6 +61,7 @@ class AttendanceProvider extends ChangeNotifier {
 
   // --- Timetable & Class/Slot Management ---
   List<FapClassSlot> _classSlots = [];
+  late final Future<void> _timetableLoadFuture;
   FapClassSlot? _selectedSlot;
   DateTime _currentWeekStart = _getWeekStart(DateTime.now());
   String? _classCodeFilter;
@@ -66,9 +84,13 @@ class AttendanceProvider extends ChangeNotifier {
       date: DateTime.now(),
     );
     _loadSampleTimetable();
-    _startOtpEngine();
+    _timetableLoadFuture = _loadSavedTimetable();
+    unawaited(_timetableLoadFuture);
     unawaited(loadGoogleSheetsConfiguration(verify: true));
   }
+
+  /// Injects [OtpProvider] reference. Called from MultiProvider setup.
+  set otpProvider(OtpProvider provider) => _otpProvider = provider;
 
   // Getters
   AttendanceSession get currentSession => _currentSession;
@@ -82,19 +104,22 @@ class AttendanceProvider extends ChangeNotifier {
   DateTime get currentWeekStart => _currentWeekStart;
   String? get classCodeFilter => _classCodeFilter;
   List<String> get availableClassCodes {
-    final codes = _classSlots
-        .map((slot) => slot.classCode.trim().toUpperCase())
-        .where((code) => code.isNotEmpty)
-        .toSet()
-        .toList();
-    codes.sort();
-    return codes;
+    return _cachedClassCodes ??= () {
+      final codes =
+          _classSlots
+              .map((slot) => slot.classCode.trim().toUpperCase())
+              .where((code) => code.isNotEmpty)
+              .toSet()
+              .toList()
+            ..sort();
+      return codes;
+    }();
   }
 
   bool get isSessionOpen => _currentSession.isOpen;
   bool get sessionOperationInProgress => _sessionOperationInProgress;
   bool get loadingSelectedSession => _loadingSelectedSession;
-  bool get isOtpPaused => _otpRotationPaused;
+  bool get isOtpPaused => _otpProvider?.isPaused ?? false;
   bool get otpPauseOperationInProgress => _otpPauseOperationInProgress;
   String? get serverSessionId => _currentSession.serverSessionId;
   bool isStatusUpdatePending(String rollNo) =>
@@ -126,24 +151,61 @@ class AttendanceProvider extends ChangeNotifier {
       : _attendanceApi.exportUrl(_currentSession.serverSessionId!);
 
   List<Student> get filteredStudents {
-    return _students.where((s) {
+    if (_cachedFilteredStudents != null &&
+        _cachedSearchQuery == _searchQuery &&
+        _cachedFilterStatus == _filterStatus &&
+        _cachedFilterVersion == _studentsVersion) {
+      return _cachedFilteredStudents!;
+    }
+    final query = _searchQuery.toLowerCase();
+    _cachedFilteredStudents = _students.where((s) {
       final matchesSearch =
-          _searchQuery.isEmpty ||
-          s.rollNo.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          s.fullName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          s.email.toLowerCase().contains(_searchQuery.toLowerCase());
+          query.isEmpty ||
+          s.rollNo.toLowerCase().contains(query) ||
+          s.fullName.toLowerCase().contains(query) ||
+          s.email.toLowerCase().contains(query);
       final matchesFilter = _filterStatus == null || s.status == _filterStatus;
       return matchesSearch && matchesFilter;
     }).toList();
+    _cachedSearchQuery = _searchQuery;
+    _cachedFilterStatus = _filterStatus;
+    _cachedFilterVersion = _studentsVersion;
+    return _cachedFilteredStudents!;
   }
 
-  int get countPresent =>
-      _students.where((s) => s.status == AttendanceStatus.present).length;
-  int get countAbsent =>
-      _students.where((s) => s.status == AttendanceStatus.absent).length;
+  void _refreshCounts() {
+    if (_cachedCountVersion == _studentsVersion) return;
+    _cachedCountPresent = 0;
+    _cachedCountAbsent = 0;
+    for (final s in _students) {
+      if (s.status == AttendanceStatus.present) {
+        _cachedCountPresent++;
+      } else if (s.status == AttendanceStatus.absent) {
+        _cachedCountAbsent++;
+      }
+    }
+    _cachedCountVersion = _studentsVersion;
+  }
+
+  int get countPresent {
+    _refreshCounts();
+    return _cachedCountPresent;
+  }
+
+  int get countAbsent {
+    _refreshCounts();
+    return _cachedCountAbsent;
+  }
+
   int get countTotal => _students.length;
   double get attendancePercentage =>
       countTotal == 0 ? 0 : countPresent / countTotal * 100;
+
+  void clearLastCheckinNotification() {
+    if (_lastCheckinNotification == null) return;
+    _lastCheckinNotification = null;
+    notifyListeners();
+  }
 
   // Week navigation
   String get currentWeekLabel {
@@ -228,14 +290,13 @@ class AttendanceProvider extends ChangeNotifier {
       unawaited(_liveService.disconnect());
       _selectedSlot = null;
       _students = [];
+      _studentsVersion++;
       _latestServerStudents.clear();
       _currentSession = AttendanceSession(
         classCode: '',
         subjectCode: '',
         slot: 0,
         date: DateTime.now(),
-        activeOtp: _currentSession.activeOtp,
-        otpRemainingSeconds: _currentSession.otpRemainingSeconds,
       );
     }
     notifyListeners();
@@ -246,24 +307,7 @@ class AttendanceProvider extends ChangeNotifier {
     return _currentWeekStart.add(Duration(days: dayOfWeek - 1));
   }
 
-  // --- OTP Engine ---
-  void _startOtpEngine() {
-    _updateOtp();
-    _otpTimer?.cancel();
-    _otpTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_otpRotationPaused) return;
-      _currentSession.otpRemainingSeconds = OtpService.getRemainingSeconds();
-      if (_currentSession.otpRemainingSeconds == 10 ||
-          _currentSession.activeOtp.isEmpty) {
-        _updateOtp();
-      }
-      notifyListeners();
-    });
-  }
-
-  void _updateOtp() {
-    _currentSession.activeOtp = OtpService.generateOtpForTimeWindow();
-  }
+  // OTP engine moved to OtpProvider (Fix 1).
 
   // --- Search & Filter ---
   void setSearchQuery(String query) {
@@ -354,7 +398,7 @@ class AttendanceProvider extends ChangeNotifier {
       }
       _lastCheckinNotification =
           payload['message']?.toString() ?? 'Đã đóng phiên điểm danh.';
-      _otpRotationPaused = false;
+      _otpProvider?.resume();
       // FAP Demo can still correct Present/Absent after closing a session.
       // Keep the same SignalR group and polling fallback until another slot
       // is selected, so the closed-session dashboard remains synchronized.
@@ -374,7 +418,7 @@ class AttendanceProvider extends ChangeNotifier {
     if (sessionId == null ||
         !_currentSession.isOpen ||
         _otpPauseOperationInProgress ||
-        _otpRotationPaused) {
+        isOtpPaused) {
       return false;
     }
 
@@ -407,7 +451,7 @@ class AttendanceProvider extends ChangeNotifier {
     if (sessionId == null ||
         !_currentSession.isOpen ||
         _otpPauseOperationInProgress ||
-        !_otpRotationPaused) {
+        !isOtpPaused) {
       return false;
     }
 
@@ -423,8 +467,7 @@ class AttendanceProvider extends ChangeNotifier {
         );
       }
       _applyServerSnapshot(Map<String, dynamic>.from(snapshot));
-      _updateOtp();
-      _currentSession.otpRemainingSeconds = OtpService.getRemainingSeconds();
+      _otpProvider?.resume();
       _lastCheckinNotification =
           payload['message']?.toString() ?? 'Đã tiếp tục xoay QR và OTP.';
       return true;
@@ -538,14 +581,14 @@ class AttendanceProvider extends ChangeNotifier {
 
   void _startDashboardPolling() {
     _dashboardPollTimer?.cancel();
+    // Fix 4: increased from 5s to 15s — SignalR is the primary update channel.
     _dashboardPollTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 15),
       (_) => unawaited(refreshSessionDashboard()),
     );
   }
 
   void _applyServerSnapshot(Map<String, dynamic> snapshot) {
-    final wasOtpPaused = _otpRotationPaused;
     final previousBlockedAttempts = _deviceBindings.fold<int>(
       0,
       (total, binding) =>
@@ -560,20 +603,23 @@ class AttendanceProvider extends ChangeNotifier {
       snapshot['closedAt']?.toString() ?? '',
     )?.toLocal();
 
-    _otpRotationPaused = snapshot['otpPaused'] == true;
-    if (_otpRotationPaused) {
-      final pausedOtp = snapshot['pausedOtp']?.toString();
-      final remainingSeconds = snapshot['otpRemainingSeconds'];
-      if (pausedOtp != null && pausedOtp.length == 6) {
-        _currentSession.activeOtp = pausedOtp;
-      }
-      if (remainingSeconds is num) {
-        _currentSession.otpRemainingSeconds = remainingSeconds.toInt();
-      }
-    } else if (wasOtpPaused) {
-      _updateOtp();
-      _currentSession.otpRemainingSeconds = OtpService.getRemainingSeconds();
+    // Keep the session fields populated for standalone widgets/tests, while
+    // the isolated provider remains the high-frequency source in the app.
+    final pausedOtp = snapshot['pausedOtp']?.toString();
+    final remainingSeconds = (snapshot['otpRemainingSeconds'] as num?)?.toInt();
+    if (pausedOtp != null && pausedOtp.length == 6) {
+      _currentSession.activeOtp = pausedOtp;
     }
+    if (remainingSeconds != null) {
+      _currentSession.otpRemainingSeconds = remainingSeconds;
+    }
+
+    // Delegate OTP pause state to the isolated OtpProvider (Fix 1).
+    _otpProvider?.syncFromSnapshot(
+      paused: snapshot['otpPaused'] == true,
+      frozenOtp: pausedOtp,
+      frozenSeconds: remainingSeconds,
+    );
 
     final remoteStudents = snapshot['students'];
     if (remoteStudents is List) {
@@ -600,6 +646,7 @@ class AttendanceProvider extends ChangeNotifier {
           })
           .where((student) => student.rollNo.isNotEmpty)
           .toList();
+      _studentsVersion++; // Invalidate caches (Fix 3).
       _latestServerStudents
         ..clear()
         ..addEntries(
@@ -690,18 +737,17 @@ class AttendanceProvider extends ChangeNotifier {
     unawaited(_liveService.disconnect());
     _selectedSlot = slot;
     _latestServerStudents.clear();
-    _otpRotationPaused = false;
+    _otpProvider?.resume();
     _deviceBindings = [];
     _currentSession = AttendanceSession(
       classCode: slot.classCode,
       subjectCode: slot.subjectCode,
       slot: slot.slot,
       date: getDateForDay(slot.dayOfWeek),
-      activeOtp: _currentSession.activeOtp,
-      otpRemainingSeconds: _currentSession.otpRemainingSeconds,
     );
 
     _students = [];
+    _studentsVersion++;
     _loadingSelectedSession = true;
     _lastCheckinNotification =
         'Đang tải ${slot.subjectCode} - ${slot.classCode} (Slot ${slot.slot}) từ Google Sheets...';
@@ -709,6 +755,22 @@ class AttendanceProvider extends ChangeNotifier {
     _rosterLoadFuture = _loadPersistedClassRoster(slot.classCode, slot.id);
     unawaited(_rosterLoadFuture);
     return true;
+  }
+
+  /// Selects a slot and waits until its stored session or roster has loaded.
+  ///
+  /// Dashboard actions that immediately navigate or export use this method so
+  /// they never operate on the previously selected class while the new class
+  /// is still being fetched.
+  Future<bool> selectTimetableSlotAndWait(FapClassSlot slot) async {
+    final accepted = selectTimetableSlot(slot);
+    if (!accepted) return false;
+    await _rosterLoadFuture;
+    return _selectedSlot?.id == slot.id &&
+        DateUtils.isSameDay(
+          _currentSession.date,
+          getDateForDay(slot.dayOfWeek),
+        );
   }
 
   Future<void> _loadPersistedClassRoster(
@@ -764,6 +826,7 @@ class AttendanceProvider extends ChangeNotifier {
           .toList();
       _classRosters[classCode] = students;
       _students = students;
+      _studentsVersion++;
       _latestServerStudents
         ..clear()
         ..addEntries(
@@ -807,30 +870,198 @@ class AttendanceProvider extends ChangeNotifier {
   /// Add a new class slot to the timetable
   void addClassSlot(FapClassSlot newSlot) {
     _classSlots.add(newSlot);
+    _cachedClassCodes = null; // Invalidate cache (Fix 3).
+    unawaited(_persistTimetable());
     notifyListeners();
   }
 
   /// Remove a class slot
   void removeClassSlot(String slotId) {
     _classSlots.removeWhere((s) => s.id == slotId);
+    _cachedClassCodes = null; // Invalidate cache (Fix 3).
+    unawaited(_persistTimetable());
     notifyListeners();
   }
 
+  Future<int> importTimetableSlots(
+    List<FapClassSlot> slots, {
+    bool replaceExisting = true,
+  }) async {
+    await _timetableLoadFuture;
+    if (_currentSession.isOpen) {
+      throw StateError(
+        'Hãy đóng phiên điểm danh trước khi thay đổi thời khóa biểu.',
+      );
+    }
+    if (hasUnsavedAttendanceChanges || _savingAttendanceDraft) {
+      throw StateError(
+        'Hãy lưu hoặc hủy bản nháp điểm danh trước khi nhập lịch.',
+      );
+    }
+
+    final normalized = slots
+        .where(
+          (slot) =>
+              slot.subjectCode.trim().isNotEmpty &&
+              slot.classCode.trim().isNotEmpty &&
+              slot.dayOfWeek >= 1 &&
+              slot.dayOfWeek <= 7 &&
+              slot.slot >= 1 &&
+              slot.slot <= 8,
+        )
+        .map(
+          (slot) => FapClassSlot(
+            id: slot.id,
+            subjectCode: slot.subjectCode.trim().toUpperCase(),
+            subjectName: slot.subjectName.trim().isEmpty
+                ? slot.subjectCode.trim().toUpperCase()
+                : slot.subjectName.trim(),
+            classCode: slot.classCode.trim().toUpperCase(),
+            slot: slot.slot,
+            dayOfWeek: slot.dayOfWeek,
+            room: slot.room.trim().toUpperCase(),
+            slotTime: FapClassSlot.getSlotTimeRange(slot.slot),
+            sessionNumber: slot.sessionNumber,
+            instructor: slot.instructor.trim(),
+            campus: slot.campus.trim().isEmpty ? 'FUHCM' : slot.campus.trim(),
+            meetUrl: slot.meetUrl,
+            isOnline: slot.isOnline,
+          ),
+        )
+        .toList();
+    if (normalized.isEmpty) {
+      throw StateError('Không có ca học hợp lệ để nhập.');
+    }
+
+    final next = replaceExisting ? <FapClassSlot>[] : [..._classSlots];
+    final keys = next.map(_slotIdentity).toSet();
+    var importedCount = 0;
+    for (final slot in normalized) {
+      if (!keys.add(_slotIdentity(slot))) continue;
+      next.add(slot);
+      importedCount++;
+    }
+    next.sort((a, b) {
+      final dayComparison = a.dayOfWeek.compareTo(b.dayOfWeek);
+      if (dayComparison != 0) return dayComparison;
+      final slotComparison = a.slot.compareTo(b.slot);
+      if (slotComparison != 0) return slotComparison;
+      return a.subjectCode.compareTo(b.subjectCode);
+    });
+
+    _classSlots = next;
+    _cachedClassCodes = null;
+    _classCodeFilter = null;
+    if (_selectedSlot != null &&
+        !_classSlots.any((slot) => slot.id == _selectedSlot!.id)) {
+      _dashboardPollTimer?.cancel();
+      unawaited(_liveService.disconnect());
+      _selectedSlot = null;
+      _students = [];
+      _studentsVersion++;
+      _latestServerStudents.clear();
+      _currentSession = AttendanceSession(
+        classCode: '',
+        subjectCode: '',
+        slot: 0,
+        date: DateTime.now(),
+      );
+    }
+    await _persistTimetable();
+    notifyListeners();
+    return importedCount;
+  }
+
+  Future<void> _loadSavedTimetable() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final encoded = preferences.getString(_timetablePreferenceKey);
+      if (encoded == null || encoded.trim().isEmpty) return;
+      final decoded = jsonDecode(encoded);
+      if (decoded is! List) return;
+      final slots = decoded
+          .whereType<Map>()
+          .map((item) => FapClassSlot.fromJson(Map<String, dynamic>.from(item)))
+          .where(
+            (slot) =>
+                slot.id.isNotEmpty &&
+                slot.subjectCode.isNotEmpty &&
+                slot.classCode.isNotEmpty,
+          )
+          .toList();
+      if (slots.isEmpty) return;
+      _classSlots = slots;
+      _cachedClassCodes = null;
+      notifyListeners();
+    } on MissingPluginException {
+      // Unit tests and non-plugin isolates do not register SharedPreferences.
+    } catch (error) {
+      debugPrint('Không thể tải thời khóa biểu đã lưu: $error');
+    }
+  }
+
+  Future<void> _persistTimetable() async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(
+        _timetablePreferenceKey,
+        jsonEncode(_classSlots.map((slot) => slot.toJson()).toList()),
+      );
+    } on MissingPluginException {
+      // Unit tests and non-plugin isolates do not register SharedPreferences.
+    } catch (error) {
+      debugPrint('Không thể lưu thời khóa biểu: $error');
+    }
+  }
+
+  static String _slotIdentity(FapClassSlot slot) =>
+      '${slot.subjectCode.trim().toUpperCase()}|'
+      '${slot.classCode.trim().toUpperCase()}|'
+      '${slot.dayOfWeek}|${slot.slot}';
+
   /// Import students for a specific class from CSV content
-  StudentCsvImportResult parseStudentCsv(String rawCsv, String classCode) {
+  StudentRosterImportResult parseStudentCsv(String rawCsv, String classCode) {
     return StudentCsvImportService.parse(rawCsv, fallbackGroup: classCode);
   }
 
-  Future<StudentCsvImportResult> importStudentsForClass(
+  StudentRosterImportResult parseStudentFile(
+    List<int> bytes,
+    String fileName,
+    String classCode,
+  ) {
+    return StudentRosterImportService.parseFile(
+      bytes,
+      fileName: fileName,
+      fallbackGroup: classCode,
+    );
+  }
+
+  Future<StudentRosterImportResult> importStudentsForClass(
     String classCode,
     String rawCsv,
   ) async {
+    final result = parseStudentCsv(rawCsv, classCode);
+    return _saveImportedRoster(classCode, result);
+  }
+
+  Future<StudentRosterImportResult> importStudentFileForClass(
+    String classCode,
+    List<int> bytes,
+    String fileName,
+  ) async {
+    final result = parseStudentFile(bytes, fileName, classCode);
+    return _saveImportedRoster(classCode, result);
+  }
+
+  Future<StudentRosterImportResult> _saveImportedRoster(
+    String classCode,
+    StudentRosterImportResult result,
+  ) async {
     if (hasUnsavedAttendanceChanges || _savingAttendanceDraft) {
       throw StateError(
-        'Hãy lưu hoặc hủy các dòng đã sửa trước khi import CSV.',
+        'Hãy lưu hoặc hủy các dòng đã sửa trước khi import danh sách sinh viên.',
       );
     }
-    final result = parseStudentCsv(rawCsv, classCode);
     final payload = await _attendanceApi.syncClassRoster(
       classCode,
       result.students,
@@ -848,6 +1079,7 @@ class AttendanceProvider extends ChangeNotifier {
         _applyServerSnapshot(Map<String, dynamic>.from(snapshot));
       } else {
         _students = result.students;
+        _studentsVersion++;
       }
     }
     _lastCheckinNotification =
@@ -878,6 +1110,7 @@ class AttendanceProvider extends ChangeNotifier {
       _classRosters[classCode] = students;
       if (_currentSession.classCode == classCode) {
         _students = students;
+        _studentsVersion++;
       }
       notifyListeners();
       return students.length;
@@ -985,6 +1218,7 @@ class AttendanceProvider extends ChangeNotifier {
         student.status = newStatus;
         student.checkinTime = checkinTime;
       }
+      _studentsVersion++;
       notifyListeners();
       return;
     }
@@ -995,6 +1229,7 @@ class AttendanceProvider extends ChangeNotifier {
     student.checkinTime = newStatus == AttendanceStatus.present
         ? DateTime.now()
         : null;
+    _studentsVersion++; // Invalidate caches (Fix 3).
     notifyListeners();
     unawaited(
       _updateServerAttendance(sessionId, student, newStatus, previousStatus),
@@ -1010,6 +1245,7 @@ class AttendanceProvider extends ChangeNotifier {
       student.checkinTime = remote?.checkinTime;
     }
     _attendanceDrafts.clear();
+    _studentsVersion++;
     _lastCheckinNotification = 'Đã hủy các thay đổi chưa lưu.';
     notifyListeners();
   }
@@ -1166,6 +1402,7 @@ class AttendanceProvider extends ChangeNotifier {
       student.status = AttendanceStatus.present;
       student.checkinTime = DateTime.now();
       student.notes = 'Checked in via OTP QR';
+      _studentsVersion++;
 
       _lastCheckinNotification =
           '✅ ${student.fullName} (${student.rollNo}) đã điểm danh thành công!';
@@ -1189,6 +1426,7 @@ class AttendanceProvider extends ChangeNotifier {
         notes: 'Auto-added via OTP Check-in',
       );
       _students.add(newStudent);
+      _studentsVersion++;
       _lastCheckinNotification =
           '✅ Thêm & điểm danh thành công cho $cleanEmail!';
       notifyListeners();
@@ -1201,8 +1439,19 @@ class AttendanceProvider extends ChangeNotifier {
     }
   }
 
-  Future<StudentCsvImportResult> importCsvContent(String rawCsv) {
+  Future<StudentRosterImportResult> importCsvContent(String rawCsv) {
     return importStudentsForClass(_currentSession.classCode, rawCsv);
+  }
+
+  Future<StudentRosterImportResult> importStudentFile(
+    List<int> bytes,
+    String fileName,
+  ) {
+    return importStudentFileForClass(
+      _currentSession.classCode,
+      bytes,
+      fileName,
+    );
   }
 
   String exportFapCsv() {
@@ -1368,7 +1617,6 @@ class AttendanceProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    _otpTimer?.cancel();
     _dashboardPollTimer?.cancel();
     unawaited(_liveService.disconnect());
     super.dispose();

@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -6,7 +6,7 @@ import '../providers/attendance_provider.dart';
 import '../models/fap_class_slot.dart';
 
 /// Material 3 Dialog for adding a new class/slot to the lecturer's timetable.
-/// Enforces inserting students either via CSV or Google Sheets as required.
+/// Enforces inserting students via CSV, XLSX or Google Sheets as required.
 class AddClassDialog extends StatefulWidget {
   const AddClassDialog({super.key});
 
@@ -39,38 +39,18 @@ class _AddClassDialogState extends State<AddClassDialog> {
   int _selectedDayOfWeek = 1; // 1 = Thứ 2, ..., 7 = CN
   bool _isOnline = false;
 
-  // Import mode: 0 = CSV file, 1 = Google Sheets DB
+  // Import mode: 0 = CSV/XLSX file, 1 = Google Sheets DB
   int _importMethodIndex = 0;
 
   // Import file & sheet state
   String? _pickedFileName;
   int? _importedStudentCount;
-  String? _cachedCsvContent;
+  Uint8List? _cachedStudentFileBytes;
+  String? _cachedStudentFileName;
   bool _isLoading = false;
 
   @override
-  void initState() {
-    super.initState();
-    _classCodeController.addListener(_onClassCodeChanged);
-  }
-
-  void _onClassCodeChanged() {
-    final classCode = _classCodeController.text.trim();
-    if (_cachedCsvContent != null && classCode.isNotEmpty) {
-      final provider = Provider.of<AttendanceProvider>(context, listen: false);
-      final result = provider.parseStudentCsv(_cachedCsvContent!, classCode);
-      final count = result.importedCount;
-      if (count != _importedStudentCount) {
-        setState(() {
-          _importedStudentCount = count;
-        });
-      }
-    }
-  }
-
-  @override
   void dispose() {
-    _classCodeController.removeListener(_onClassCodeChanged);
     _subjectCodeController.dispose();
     _subjectNameController.dispose();
     _classCodeController.dispose();
@@ -80,13 +60,13 @@ class _AddClassDialogState extends State<AddClassDialog> {
     super.dispose();
   }
 
-  /// Pick a CSV file and import students.
+  /// Pick a CSV or XLSX file and validate its student roster.
   Future<void> _pickAndImportFile() async {
     setState(() => _isLoading = true);
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv'],
+        allowedExtensions: ['csv', 'xlsx'],
         withData: true,
       );
 
@@ -109,13 +89,17 @@ class _AddClassDialogState extends State<AddClassDialog> {
         return;
       }
 
-      final content = utf8.decode(file.bytes!);
       final classCode = _classCodeController.text.trim();
       if (!mounted) return;
       final provider = Provider.of<AttendanceProvider>(context, listen: false);
 
-      final importResult = provider.parseStudentCsv(content, classCode);
-      _cachedCsvContent = content;
+      final importResult = provider.parseStudentFile(
+        file.bytes!,
+        file.name,
+        classCode,
+      );
+      _cachedStudentFileBytes = file.bytes;
+      _cachedStudentFileName = file.name;
       _pickedFileName = file.name;
       setState(() {
         _importedStudentCount = importResult.importedCount;
@@ -165,7 +149,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.red[800],
-            content: Text('Không thể import CSV: $message'),
+            content: Text('Không thể import danh sách sinh viên: $message'),
           ),
         );
       }
@@ -200,6 +184,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
       _isLoading = false;
       if (count > 0) {
         _importedStudentCount = count;
+        _cachedStudentFileBytes = null;
+        _cachedStudentFileName = null;
         _pickedFileName = 'Google Sheets ($count sinh viên)';
       }
     });
@@ -233,7 +219,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
       return;
     }
 
-    // Strict validation: Lecturer must insert students via CSV or Google Sheets
+    // Strict validation: Lecturer must insert students via file or Google Sheets
     if (_importedStudentCount == null || _importedStudentCount! <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -244,7 +230,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
               SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Bắt buộc: Giảng viên phải nạp danh sách học viên bằng file CSV hoặc Google Sheets!',
+                  'Bắt buộc: Giảng viên phải nạp danh sách học viên bằng file CSV, XLSX hoặc Google Sheets!',
                   style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
@@ -263,11 +249,15 @@ class _AddClassDialogState extends State<AddClassDialog> {
     final room = _roomController.text.trim();
     final instructor = _instructorController.text.trim();
 
-    // Import students roster if CSV was picked
-    if (_cachedCsvContent != null) {
+    // Import the selected local roster after all class fields are validated.
+    if (_cachedStudentFileBytes != null && _cachedStudentFileName != null) {
       setState(() => _isLoading = true);
       try {
-        await provider.importStudentsForClass(classCode, _cachedCsvContent!);
+        await provider.importStudentFileForClass(
+          classCode,
+          _cachedStudentFileBytes!,
+          _cachedStudentFileName!,
+        );
       } catch (error) {
         if (mounted) {
           setState(() => _isLoading = false);
@@ -395,7 +385,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
                         ),
                         SizedBox(height: 2),
                         Text(
-                          'Thiết lập thông tin môn học và import danh sách sinh viên (CSV / Google Sheets)',
+                          'Thiết lập thông tin môn học và import danh sách sinh viên (CSV / XLSX / Google Sheets)',
                           style: TextStyle(fontSize: 13, color: Colors.black54),
                         ),
                       ],
@@ -706,13 +696,13 @@ class _AddClassDialogState extends State<AddClassDialog> {
                       ),
                       const SizedBox(height: 10),
 
-                      // Method Selector: CSV vs Google Sheets
+                      // Method Selector: local file vs Google Sheets
                       SegmentedButton<int>(
                         segments: const [
                           ButtonSegment<int>(
                             value: 0,
                             icon: Icon(Icons.file_present_rounded),
-                            label: Text('File CSV'),
+                            label: Text('CSV / XLSX'),
                           ),
                           ButtonSegment<int>(
                             value: 1,
@@ -729,7 +719,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
 
                       // Upload Area based on Selected Method
                       if (_importMethodIndex == 0) ...[
-                        // CSV file picker card
+                        // CSV/XLSX file picker card
                         Card(
                           elevation: 0,
                           shape: RoundedRectangleBorder(
@@ -772,7 +762,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                         CrossAxisAlignment.start,
                                     children: [
                                       const Text(
-                                        'Import file CSV',
+                                        'Import file CSV hoặc XLSX',
                                         style: TextStyle(
                                           fontSize: 14.5,
                                           fontWeight: FontWeight.bold,
@@ -782,7 +772,7 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                       const SizedBox(height: 3),
                                       Text(
                                         _pickedFileName ??
-                                            'Hỗ trợ StudentCode/FullName hoặc RollNo/FullName/Email',
+                                            'Hỗ trợ .csv, .xlsx với StudentCode/FullName hoặc RollNo/FullName/Email',
                                         style: TextStyle(
                                           fontSize: 12,
                                           color: Colors.grey[700],
