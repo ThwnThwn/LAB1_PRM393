@@ -87,4 +87,63 @@ void main() {
     expect(persisted, hasLength(1));
     expect((persisted.single as Map<String, dynamic>)['dayOfWeek'], 4);
   });
+
+  test('course meetings follow calendar date order across weeks', () async {
+    final provider = AttendanceProvider(
+      attendanceApi: _TimetableApi(),
+      liveService: _TimetableLiveService(),
+    );
+    addTearDown(provider.dispose);
+
+    await provider.importTimetableSlots([
+      FapClassSlot(
+        id: 'prn-mon',
+        subjectCode: 'PRN232',
+        subjectName: 'Backend',
+        classCode: 'SE1917',
+        slot: 1,
+        dayOfWeek: DateTime.monday,
+        sessionNumber: 4,
+        totalSessions: 20,
+      ),
+      FapClassSlot(
+        id: 'prn-thu',
+        subjectCode: 'PRN232',
+        subjectName: 'Backend',
+        classCode: 'SE1917',
+        slot: 1,
+        dayOfWeek: DateTime.thursday,
+        sessionNumber: 3,
+        totalSessions: 20,
+      ),
+    ]);
+
+    final anchor = provider.timetableMeetingAnchorWeekStart;
+    final mondayTemplate = provider.classSlots.firstWhere(
+      (slot) => slot.dayOfWeek == DateTime.monday,
+    );
+    final thursdayTemplate = provider.classSlots.firstWhere(
+      (slot) => slot.dayOfWeek == DateTime.thursday,
+    );
+    final meetings = [
+      provider.meetingOccurrenceForDate(mondayTemplate, anchor),
+      provider.meetingOccurrenceForDate(
+        thursdayTemplate,
+        anchor.add(const Duration(days: 3)),
+      ),
+      provider.meetingOccurrenceForDate(
+        mondayTemplate,
+        anchor.add(const Duration(days: 7)),
+      ),
+    ];
+
+    expect(meetings.map((slot) => slot?.sessionNumber), [3, 4, 5]);
+    expect(
+      provider.meetingOccurrenceForDate(
+        mondayTemplate,
+        anchor.subtract(const Duration(days: 14)),
+      ),
+      isNull,
+    );
+  });
 }

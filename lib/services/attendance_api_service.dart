@@ -89,6 +89,8 @@ class AttendanceApiService {
       'subjectCode': session.subjectCode,
       'slot': session.slot,
       'date': session.date.toIso8601String().split('T').first,
+      'sessionNumber': session.sessionNumber,
+      'totalSessions': session.totalSessions,
       'lateAfterMinutes': 10,
       'actor': 'Giảng viên',
       'students': students
@@ -221,6 +223,8 @@ class AttendanceApiService {
       'subjectCode': session.subjectCode,
       'slot': session.slot,
       'date': session.date.toIso8601String().split('T').first,
+      'sessionNumber': session.sessionNumber,
+      'totalSessions': session.totalSessions,
       'actor': 'Giảng viên',
       'changes': changes,
     });

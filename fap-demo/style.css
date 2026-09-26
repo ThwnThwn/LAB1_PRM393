@@ -273,7 +273,7 @@ h1 {
 
 .session-picker-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -371,7 +371,7 @@ h1 {
 
 .session-details {
   display: grid;
-  grid-template-columns: 1.2fr 1fr .65fr 1fr 1fr;
+  grid-template-columns: 1.15fr .95fr .85fr .65fr 1fr 1fr;
   margin: 0;
   background: var(--surface);
   border-top: 1px solid var(--border);
@@ -753,6 +753,10 @@ tbody tr:last-child td {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .session-picker-field:last-child {
+    grid-column: 1 / -1;
+  }
+
   .session-picker-help {
     max-width: none;
     margin-bottom: 0;
@@ -788,8 +792,7 @@ tbody tr:last-child td {
     border-bottom: 1px solid var(--border);
   }
 
-  .session-details > div:last-child {
-    grid-column: 1 / -1;
+  .session-details > div:nth-last-child(-n + 2) {
     border-bottom: 0;
   }
 
@@ -840,6 +843,10 @@ tbody tr:last-child td {
 
   .session-picker-fields {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .session-picker-field:last-child {
+    grid-column: auto;
   }
 
   h1 {

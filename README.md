@@ -6,7 +6,8 @@
 
 ## Chức năng hiện có
 
-- Thời khóa biểu tuần và chọn ca dạy đang thao tác.
+- Thời khóa biểu tuần và chọn ca dạy đang thao tác, phân biệt rõ buổi học trong
+  tiến độ môn (ví dụ **Buổi 7/20**) với Slot là khung giờ trong ngày.
 - Nhập thời khóa biểu từ ảnh PNG/JPG bằng OCR Anh–Việt chạy trong backend cục bộ;
   cho phép sửa và chọn từng ca trước khi thay thế hoặc gộp vào lịch hiện tại.
 - Import danh sách sinh viên từ CSV, Excel `.xlsx` hoặc cấu hình Google Sheets.
@@ -200,14 +201,15 @@ OCR bên ngoài. Lịch đã xác nhận được lưu cục bộ và tự khôi
 4. Dán Web App URL vào ứng dụng và bấm **Kiểm tra & lưu**.
 5. Backend kiểm tra kết nối rồi lưu URL. Các thao tác import, mở/đóng phiên và
    check-in chỉ được xác nhận thành công sau khi ghi được Google Sheets.
-6. Apps Script tự tạo năm tab: `Rosters`, `Sessions`, `Attendance`,
-   `DeviceBindings` và `AuditLog`.
+6. Apps Script tự tạo sáu tab: `Rosters`, `CourseMeetings`, `Sessions`,
+   `Attendance`, `DeviceBindings` và `AuditLog`. `CourseMeetings` lưu kế hoạch
+   buổi học; `Sessions` liên kết từng lần điểm danh với đúng số buổi.
 7. Sau khi cấu hình, Sheet là nguồn duy nhất cho roster, phiên, điểm danh, thiết bị
    và audit log. Desktop và cổng FAP mô phỏng đều đọc cùng nguồn này.
 8. Để có dữ liệu ngay khi demo, bấm **Tạo dữ liệu demo**. Lệnh tạo lịch tuần
    21/09–27/09/2026 gồm 7 ca và một roster chung 35 sinh viên áp dụng cho 4 lớp.
    HCM202 học Slot 1 vào Thứ 3 và Thứ 6.
-   Dữ liệu điểm danh mẫu được ghi trong cả năm tab. Có thể chạy lại;
+   Dữ liệu điểm danh mẫu được ghi trong cả sáu tab. Có thể chạy lại;
    chỉ các dòng có khóa `DEMO-*` và roster `SE1917`–`SE1920` được thay thế.
 9. Mở `/fap-demo/` để xem dữ liệu cập nhật tự động hoặc chỉnh Present/Absent thủ công.
 

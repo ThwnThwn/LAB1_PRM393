@@ -372,7 +372,8 @@ class GoogleSheetsService {
  */
 var SCHEMA = {
   Rosters: ["ClassCode", "RollNo", "FullName", "Email", "UpdatedAt"],
-  Sessions: ["SessionId", "ClassCode", "SubjectCode", "Slot", "SessionDate", "IsOpen", "OpenedAt", "ClosedAt", "LateAfterMinutes", "OtpPaused", "UpdatedAt"],
+  Sessions: ["SessionId", "ClassCode", "SubjectCode", "Slot", "SessionDate", "IsOpen", "OpenedAt", "ClosedAt", "LateAfterMinutes", "OtpPaused", "UpdatedAt", "MeetingNumber", "TotalMeetings"],
+  CourseMeetings: ["MeetingId", "ClassCode", "SubjectCode", "MeetingNumber", "TotalMeetings", "SessionDate", "Slot", "SessionId", "Status", "UpdatedAt"],
   Attendance: ["SessionId", "RollNo", "FullName", "Email", "ClassCode", "SubjectCode", "Slot", "Status", "CheckinTime", "Notes", "ConfirmationCode", "UpdatedAt"],
   DeviceBindings: ["SessionId", "BindingId", "DeviceCode", "RollNo", "FirstSeen", "LastSeen", "BlockedAttempts", "LastBlockedRollNo", "LastBlockedAt", "UpdatedAt", "DeviceHash", "NetworkHash", "UserAgentHash"],
   AuditLog: ["SessionId", "AuditId", "RollNo", "Action", "PreviousStatus", "NewStatus", "Actor", "Reason", "CreatedAt", "UpdatedAt"]
@@ -444,11 +445,51 @@ function upsertSession(session, updatedAt) {
     session.closedAt || "",
     session.lateAfterMinutes || 10,
     session.otpPaused === true,
-    updatedAt
+    updatedAt,
+    Number(session.sessionNumber || 0),
+    Number(session.totalSessions || 20)
   ]];
   replaceRows("Sessions", function(item) {
     return String(item.SessionId) === String(session.sessionId);
   }, row);
+}
+
+function upsertCourseMeeting(session, updatedAt) {
+  var meetingNumber = Number(session.sessionNumber || 0);
+  if (meetingNumber < 1) return;
+  var totalMeetings = Math.max(meetingNumber, Number(session.totalSessions || 20));
+  var classCode = String(session.classCode || "").toUpperCase();
+  var subjectCode = String(session.subjectCode || "").toUpperCase();
+  var existing = {};
+  readObjects("CourseMeetings").forEach(function(item) {
+    if (String(item.ClassCode).toUpperCase() === classCode &&
+        String(item.SubjectCode).toUpperCase() === subjectCode) {
+      existing[Number(item.MeetingNumber || 0)] = item;
+    }
+  });
+  var rows = [];
+  for (var number = 1; number <= totalMeetings; number++) {
+    var previous = existing[number] || {};
+    var isCurrent = number === meetingNumber;
+    rows.push([
+      [classCode, subjectCode, number].join("|"),
+      classCode,
+      subjectCode,
+      number,
+      totalMeetings,
+      isCurrent ? session.date : (previous.SessionDate || ""),
+      isCurrent ? session.slot : (previous.Slot || ""),
+      isCurrent ? session.sessionId : (previous.SessionId || ""),
+      isCurrent
+        ? (session.isOpen === true ? "OPEN" : (session.closedAt ? "CLOSED" : "PLANNED"))
+        : (previous.Status || "PLANNED"),
+      updatedAt
+    ]);
+  }
+  replaceRows("CourseMeetings", function(item) {
+    return String(item.ClassCode).toUpperCase() === classCode &&
+      String(item.SubjectCode).toUpperCase() === subjectCode;
+  }, rows);
 }
 
 function boolValue(value) {
@@ -514,6 +555,8 @@ function buildSessionPayload(session, allAttendance, allBindings, allAudit) {
     classCode: session.ClassCode || "",
     subjectCode: session.SubjectCode || "",
     slot: Number(session.Slot || 0),
+    sessionNumber: Number(session.MeetingNumber || 0),
+    totalSessions: Number(session.TotalMeetings || 20),
     date: session.SessionDate || "",
     isOpen: boolValue(session.IsOpen),
     openedAt: session.OpenedAt || null,
@@ -533,7 +576,7 @@ function doGet(e) {
     var action = String(params.action || "health");
 
     if (action === "health") {
-      return jsonOutput({status: "success", database: "Google Sheets", version: 5});
+      return jsonOutput({status: "success", database: "Google Sheets", version: 6});
     }
 
     if (action === "getRoster" || action === "getStudents") {
@@ -597,13 +640,13 @@ function doPost(e) {
         {classCode: "SE1920", subjectCode: "HCM202"}
       ];
       var demoSchedule = [
-        {sessionId: "DEMO-SE1917-PRN232", classCode: "SE1917", subjectCode: "PRN232", slot: 1, date: "2026-09-21", openedAt: "2026-09-21T00:00:00.000Z", closedAt: "2026-09-21T02:15:00.000Z", completed: true},
-        {sessionId: "DEMO-SE1918-PRM393", classCode: "SE1918", subjectCode: "PRM393", slot: 2, date: "2026-09-21", openedAt: "2026-09-21T02:30:00.000Z", closedAt: "2026-09-21T04:45:00.000Z", completed: true},
-        {sessionId: "DEMO-SE1920-HCM202", classCode: "SE1920", subjectCode: "HCM202", slot: 1, date: "2026-09-22", openedAt: "2026-09-22T00:00:00.000Z", closedAt: "2026-09-22T02:15:00.000Z", completed: true},
-        {sessionId: "DEMO-SE1919-EXE201", classCode: "SE1919", subjectCode: "EXE201", slot: 2, date: "2026-09-23", openedAt: "2026-09-23T02:30:00.000Z", closedAt: "", completed: false},
-        {sessionId: "DEMO-20260924-SE1917-PRN232-S1", classCode: "SE1917", subjectCode: "PRN232", slot: 1, date: "2026-09-24", openedAt: "2026-09-24T00:00:00.000Z", closedAt: "", completed: false},
-        {sessionId: "DEMO-20260924-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, date: "2026-09-24", openedAt: "2026-09-24T02:30:00.000Z", closedAt: "", completed: false},
-        {sessionId: "DEMO-20260924-SE1920-HCM202-S4", classCode: "SE1920", subjectCode: "HCM202", slot: 1, date: "2026-09-25", openedAt: "2026-09-25T00:00:00.000Z", closedAt: "", completed: false}
+        {sessionId: "DEMO-SE1917-PRN232", classCode: "SE1917", subjectCode: "PRN232", slot: 1, sessionNumber: 3, totalSessions: 20, date: "2026-09-21", openedAt: "2026-09-21T00:00:00.000Z", closedAt: "2026-09-21T02:15:00.000Z", completed: true},
+        {sessionId: "DEMO-SE1918-PRM393", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 3, totalSessions: 20, date: "2026-09-21", openedAt: "2026-09-21T02:30:00.000Z", closedAt: "2026-09-21T04:45:00.000Z", completed: true},
+        {sessionId: "DEMO-SE1920-HCM202", classCode: "SE1920", subjectCode: "HCM202", slot: 1, sessionNumber: 5, totalSessions: 20, date: "2026-09-22", openedAt: "2026-09-22T00:00:00.000Z", closedAt: "2026-09-22T02:15:00.000Z", completed: true},
+        {sessionId: "DEMO-SE1919-EXE201", classCode: "SE1919", subjectCode: "EXE201", slot: 2, sessionNumber: 5, totalSessions: 20, date: "2026-09-23", openedAt: "2026-09-23T02:30:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1917-PRN232-S1", classCode: "SE1917", subjectCode: "PRN232", slot: 1, sessionNumber: 4, totalSessions: 20, date: "2026-09-24", openedAt: "2026-09-24T00:00:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 4, totalSessions: 20, date: "2026-09-24", openedAt: "2026-09-24T02:30:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1920-HCM202-S4", classCode: "SE1920", subjectCode: "HCM202", slot: 1, sessionNumber: 6, totalSessions: 20, date: "2026-09-25", openedAt: "2026-09-25T00:00:00.000Z", closedAt: "", completed: false}
       ];
       var names = [
         "Nguyễn Minh Anh", "Trần Gia Huy", "Lê Hoàng Yến", "Phạm Khánh Linh",
@@ -617,6 +660,7 @@ function doPost(e) {
         "Phan Minh Triết", "Vũ Khánh An", "Nguyễn Hải Đăng"
       ];
       var sessionRows = [];
+      var meetingRows = [];
       var attendanceRows = [];
       var auditRows = [];
 
@@ -639,7 +683,15 @@ function doPost(e) {
         sessionRows.push([
           demoClassSession.sessionId, demoClassSession.classCode, demoClassSession.subjectCode,
           demoClassSession.slot, demoClassSession.date, false, demoClassSession.openedAt,
-          demoClassSession.closedAt, 10, false, now
+          demoClassSession.closedAt, 10, false, now,
+          demoClassSession.sessionNumber, demoClassSession.totalSessions
+        ]);
+        meetingRows.push([
+          [demoClassSession.classCode, demoClassSession.subjectCode, demoClassSession.sessionNumber].join("|"),
+          demoClassSession.classCode, demoClassSession.subjectCode,
+          demoClassSession.sessionNumber, demoClassSession.totalSessions,
+          demoClassSession.date, demoClassSession.slot, demoClassSession.sessionId,
+          demoClassSession.closedAt ? "CLOSED" : "PLANNED", now
         ]);
 
         for (var a = 0; a < names.length; a++) {
@@ -669,6 +721,9 @@ function doPost(e) {
       replaceRows("Sessions", function(item) {
         return String(item.SessionId).indexOf("DEMO-") === 0;
       }, sessionRows);
+      replaceRows("CourseMeetings", function(item) {
+        return String(item.SessionId).indexOf("DEMO-") === 0;
+      }, meetingRows);
       replaceRows("Attendance", function(item) {
         return String(item.SessionId).indexOf("DEMO-") === 0;
       }, attendanceRows);
@@ -708,6 +763,7 @@ function doPost(e) {
       var sessionId = String(session.sessionId || "");
       if (!sessionId) throw new Error("Missing sessionId");
       upsertSession(session, now);
+      upsertCourseMeeting(session, now);
 
       var attendanceRows = [];
       var attendance = session.students || [];
@@ -766,6 +822,8 @@ function doPost(e) {
         closedAt: data.isOpen === true ? "" : now,
         lateAfterMinutes: 10,
         otpPaused: false,
+        sessionNumber: Number(data.sessionNumber || 0),
+        totalSessions: Number(data.totalSessions || 20),
         students: (data.students || []).map(function(s) {
           return {
             rollNo: s.rollNo, fullName: s.fullName, email: s.email,

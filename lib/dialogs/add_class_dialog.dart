@@ -37,6 +37,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
   // State variables
   int _selectedSlot = 1;
   int _selectedDayOfWeek = 1; // 1 = Thứ 2, ..., 7 = CN
+  int _sessionNumber = 1;
+  int _totalSessions = 20;
   bool _isOnline = false;
 
   // Import mode: 0 = CSV/XLSX file, 1 = Google Sheets DB
@@ -283,7 +285,8 @@ class _AddClassDialogState extends State<AddClassDialog> {
       dayOfWeek: _selectedDayOfWeek,
       room: room.isNotEmpty ? room : (_isOnline ? 'Online' : 'NVH TBA'),
       slotTime: FapClassSlot.getSlotTimeRange(_selectedSlot),
-      sessionNumber: 1,
+      sessionNumber: _sessionNumber,
+      totalSessions: _totalSessions,
       instructor: instructor.isNotEmpty ? instructor : 'Giảng viên',
       campus: 'FUHCM',
       isOnline: _isOnline,
@@ -457,6 +460,62 @@ class _AddClassDialogState extends State<AddClassDialog> {
                                   (val == null || val.trim().isEmpty)
                                   ? 'Vui lòng nhập tên môn học'
                                   : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+
+                      // Course meeting number is distinct from the daily slot.
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              initialValue: _sessionNumber,
+                              decoration: _buildInputDecoration(
+                                labelText: 'Buổi học *',
+                                prefixIcon: Icons.format_list_numbered_rounded,
+                              ),
+                              items: List.generate(
+                                _totalSessions,
+                                (index) => DropdownMenuItem<int>(
+                                  value: index + 1,
+                                  child: Text('Buổi ${index + 1}'),
+                                ),
+                              ),
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() => _sessionNumber = value);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              initialValue: _totalSessions,
+                              decoration: _buildInputDecoration(
+                                labelText: 'Tổng số buổi *',
+                                prefixIcon: Icons.event_repeat_rounded,
+                              ),
+                              items: List.generate(
+                                60,
+                                (index) => DropdownMenuItem<int>(
+                                  value: index + 1,
+                                  child: Text('${index + 1} buổi'),
+                                ),
+                              ),
+                              onChanged: (value) {
+                                if (value != null) {
+                                  setState(() {
+                                    _totalSessions = value;
+                                    if (_sessionNumber > value) {
+                                      _sessionNumber = value;
+                                    }
+                                  });
+                                }
+                              },
                             ),
                           ),
                         ],

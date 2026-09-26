@@ -14,7 +14,9 @@ class StudentQrCheckinScreen extends StatefulWidget {
 }
 
 class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
-  final _emailController = TextEditingController(text: 'minhnbse182173@fpt.edu.vn');
+  final _emailController = TextEditingController(
+    text: 'minhnbse182173@fpt.edu.vn',
+  );
   final _otpController = TextEditingController();
 
   final bool _isAutoFilledFromQr = true;
@@ -59,7 +61,8 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
       if (res['success'] == true) {
         // Generate pseudo-cryptographic anti-fraud ticket hash
         final timestamp = DateTime.now().millisecondsSinceEpoch;
-        _digitalTicketHash = 'FAP-${email.split('@').first.toUpperCase()}-${timestamp.toRadixString(16).toUpperCase()}';
+        _digitalTicketHash =
+            'FAP-${email.split('@').first.toUpperCase()}-${timestamp.toRadixString(16).toUpperCase()}';
       }
     });
   }
@@ -105,7 +108,11 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
   }
 
   /// Form displayed after scanning QR code
-  Widget _buildCheckinForm(BuildContext context, AttendanceProvider provider, int secondsLeft) {
+  Widget _buildCheckinForm(
+    BuildContext context,
+    AttendanceProvider provider,
+    int secondsLeft,
+  ) {
     final session = provider.currentSession;
     const fptOrange = Color(0xFFF36F21);
     const deepBlue = Color(0xFF1B2A4A);
@@ -140,7 +147,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
                       decoration: BoxDecoration(
                         color: fptOrange,
                         borderRadius: BorderRadius.circular(8),
@@ -157,7 +167,11 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                     ),
                     const Row(
                       children: [
-                        Icon(Icons.qr_code_scanner, color: Colors.white70, size: 18),
+                        Icon(
+                          Icons.qr_code_scanner,
+                          color: Colors.white70,
+                          size: 18,
+                        ),
                         SizedBox(width: 6),
                         Text(
                           'FAP Verified',
@@ -178,11 +192,8 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Slot ${session.slot} • Ngày: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                  ),
+                  'Buổi ${session.sessionNumber}/${session.totalSessions} • Slot ${session.slot} • Ngày: ${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ],
             ),
@@ -196,7 +207,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
               children: [
                 // OTP Extracted Status Box
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFF8FAFC),
                     borderRadius: BorderRadius.circular(14),
@@ -210,7 +224,11 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                           color: fptOrange.withValues(alpha: 0.12),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.vpn_key_rounded, color: fptOrange, size: 20),
+                        child: const Icon(
+                          Icons.vpn_key_rounded,
+                          color: fptOrange,
+                          size: 20,
+                        ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -219,7 +237,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                           children: [
                             const Text(
                               'Mã OTP tự động trích xuất từ QR:',
-                              style: TextStyle(fontSize: 11.5, color: Colors.black54),
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Colors.black54,
+                              ),
                             ),
                             const SizedBox(height: 2),
                             Text(
@@ -239,9 +260,14 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                       ),
                       // Countdown Pill
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
                         decoration: BoxDecoration(
-                          color: secondsLeft <= 3 ? Colors.red.shade100 : Colors.orange.shade100,
+                          color: secondsLeft <= 3
+                              ? Colors.red.shade100
+                              : Colors.orange.shade100,
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
@@ -249,7 +275,9 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                             Icon(
                               Icons.timer_outlined,
                               size: 14,
-                              color: secondsLeft <= 3 ? Colors.red : Colors.orange.shade900,
+                              color: secondsLeft <= 3
+                                  ? Colors.red
+                                  : Colors.orange.shade900,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -257,7 +285,9 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.bold,
-                                color: secondsLeft <= 3 ? Colors.red : Colors.orange.shade900,
+                                color: secondsLeft <= 3
+                                    ? Colors.red
+                                    : Colors.orange.shade900,
                               ),
                             ),
                           ],
@@ -271,24 +301,36 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                 // Email Input Field
                 const Text(
                   'Email của sinh viên:',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: deepBlue),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: deepBlue,
+                  ),
                 ),
                 const SizedBox(height: 6),
                 TextField(
                   controller: _emailController,
                   decoration: InputDecoration(
                     hintText: 'ví dụ: sinhvien@gmail.com',
-                    prefixIcon: const Icon(Icons.email_outlined, color: fptOrange),
+                    prefixIcon: const Icon(
+                      Icons.email_outlined,
+                      color: fptOrange,
+                    ),
                     filled: true,
                     fillColor: const Color(0xFFF8FAFC),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: fptOrange, width: 1.8),
+                      borderSide: const BorderSide(
+                        color: fptOrange,
+                        width: 1.8,
+                      ),
                     ),
                   ),
                 ),
@@ -299,8 +341,14 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                   spacing: 6,
                   runSpacing: 6,
                   children: [
-                    _buildEmailChip('minhnbse182173@fpt.edu.vn', 'Bùi Nhật Minh'),
-                    _buildEmailChip('namnvse171234@fpt.edu.vn', 'Nguyễn Văn Nam'),
+                    _buildEmailChip(
+                      'minhnbse182173@fpt.edu.vn',
+                      'Bùi Nhật Minh',
+                    ),
+                    _buildEmailChip(
+                      'namnvse171234@fpt.edu.vn',
+                      'Nguyễn Văn Nam',
+                    ),
                     _buildEmailChip('maittse180987@fpt.edu.vn', 'Trần Thị Mai'),
                   ],
                 ),
@@ -318,13 +366,16 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                     backgroundColor: fptOrange,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                     elevation: 2,
                   ),
                 ),
 
                 // Error alert if failed
-                if (_checkinResult != null && _checkinResult!['success'] == false) ...[
+                if (_checkinResult != null &&
+                    _checkinResult!['success'] == false) ...[
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -340,7 +391,11 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                         Expanded(
                           child: Text(
                             _checkinResult!['message'] ?? 'Điểm danh thất bại.',
-                            style: TextStyle(color: Colors.red.shade900, fontSize: 13, fontWeight: FontWeight.w500),
+                            style: TextStyle(
+                              color: Colors.red.shade900,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
                         ),
                       ],
@@ -367,7 +422,9 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFF36F21).withValues(alpha: 0.15) : const Color(0xFFF1F5F9),
+          color: isSelected
+              ? const Color(0xFFF36F21).withValues(alpha: 0.15)
+              : const Color(0xFFF1F5F9),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: isSelected ? const Color(0xFFF36F21) : Colors.transparent,
@@ -388,7 +445,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
   // ===========================================================================
   // Digital Attendance Ticket (Thẻ Điểm Danh Điện Tử) — Redesigned
   // ===========================================================================
-  Widget _buildSuccessTicket(BuildContext context, AttendanceProvider provider) {
+  Widget _buildSuccessTicket(
+    BuildContext context,
+    AttendanceProvider provider,
+  ) {
     final student = _checkinResult!['student'] as Student?;
     final session = provider.currentSession;
     final now = DateTime.now();
@@ -482,7 +542,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                 ),
                 const SizedBox(height: 6),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.white.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(20),
@@ -510,7 +573,9 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                 (i) => Expanded(
                   child: Container(
                     height: 1.5,
-                    color: i.isEven ? const Color(0xFFA7F3D0) : Colors.transparent,
+                    color: i.isEven
+                        ? const Color(0xFFA7F3D0)
+                        : Colors.transparent,
                   ),
                 ),
               ),
@@ -553,6 +618,14 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                 ),
                 _buildTicketDivider(),
                 _buildTicketInfoRow(
+                  icon: Icons.format_list_numbered_rounded,
+                  label: 'Buổi học:',
+                  value:
+                      'Buổi ${session.sessionNumber}/${session.totalSessions}',
+                  valueColor: deepBlue,
+                ),
+                _buildTicketDivider(),
+                _buildTicketInfoRow(
                   icon: Icons.access_time_filled_rounded,
                   label: 'Ca học (Slot):',
                   value: slotTimeRange,
@@ -579,7 +652,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
 
                 // ─── Sync Status Confirmation ───
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: const Color(0xFFECFDF5),
                     borderRadius: BorderRadius.circular(12),
@@ -626,7 +702,10 @@ class _StudentQrCheckinScreenState extends State<StudentQrCheckinScreen> {
                     icon: const Icon(Icons.swap_horiz_rounded, size: 20),
                     label: const Text(
                       'Điểm danh ca học khác / Đổi sinh viên',
-                      style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
                     ),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: Colors.grey.shade700,

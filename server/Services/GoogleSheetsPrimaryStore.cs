@@ -38,7 +38,7 @@ public sealed record StoredAttendanceSession(
 public sealed class GoogleSheetsPrimaryStore
 {
     private const string LegacyScriptMessage =
-        "Apps Script đang là bản cũ (cần phiên bản 4). Mở desktop app → Cấu hình Google Sheets, " +
+        "Apps Script đang là bản cũ (cần phiên bản 6). Mở desktop app → Cấu hình Google Sheets, " +
         "sao chép lại mã Apps Script rồi chọn Deploy → Manage deployments → Edit → New version → Deploy.";
 
     private sealed record DemoClassDefinition(string ClassCode, string SubjectCode);
@@ -51,7 +51,9 @@ public sealed class GoogleSheetsPrimaryStore
         DateTime Date,
         int StartHour,
         int StartMinute,
-        bool Completed);
+        bool Completed,
+        int SessionNumber,
+        int TotalSessions = 20);
 
     private static readonly DemoClassDefinition[] DemoClasses =
     [
@@ -63,14 +65,14 @@ public sealed class GoogleSheetsPrimaryStore
 
     private static readonly DemoScheduleDefinition[] DemoSchedule =
     [
-        new("DEMO-SE1917-PRN232", "SE1917", "PRN232", 1, new DateTime(2026, 9, 21), 7, 0, true),
-        new("DEMO-SE1918-PRM393", "SE1918", "PRM393", 2, new DateTime(2026, 9, 21), 9, 30, true),
-        new("DEMO-SE1920-HCM202", "SE1920", "HCM202", 1, new DateTime(2026, 9, 22), 7, 0, true),
-        new("DEMO-SE1919-EXE201", "SE1919", "EXE201", 2, new DateTime(2026, 9, 23), 9, 30, false),
-        new("DEMO-20260924-SE1917-PRN232-S1", "SE1917", "PRN232", 1, new DateTime(2026, 9, 24), 7, 0, false),
-        new("DEMO-20260924-SE1918-PRM393-S2", "SE1918", "PRM393", 2, new DateTime(2026, 9, 24), 9, 30, false),
+        new("DEMO-SE1917-PRN232", "SE1917", "PRN232", 1, new DateTime(2026, 9, 21), 7, 0, true, 3),
+        new("DEMO-SE1918-PRM393", "SE1918", "PRM393", 2, new DateTime(2026, 9, 21), 9, 30, true, 3),
+        new("DEMO-SE1920-HCM202", "SE1920", "HCM202", 1, new DateTime(2026, 9, 22), 7, 0, true, 5),
+        new("DEMO-SE1919-EXE201", "SE1919", "EXE201", 2, new DateTime(2026, 9, 23), 9, 30, false, 5),
+        new("DEMO-20260924-SE1917-PRN232-S1", "SE1917", "PRN232", 1, new DateTime(2026, 9, 24), 7, 0, false, 4),
+        new("DEMO-20260924-SE1918-PRM393-S2", "SE1918", "PRM393", 2, new DateTime(2026, 9, 24), 9, 30, false, 4),
         // Keep the existing opaque ID so previously shared FAP links continue to resolve.
-        new("DEMO-20260924-SE1920-HCM202-S4", "SE1920", "HCM202", 1, new DateTime(2026, 9, 25), 7, 0, false),
+        new("DEMO-20260924-SE1920-HCM202-S4", "SE1920", "HCM202", 1, new DateTime(2026, 9, 25), 7, 0, false, 6),
     ];
 
     private static readonly string[] DemoStudentNames =
@@ -358,6 +360,8 @@ public sealed class GoogleSheetsPrimaryStore
                 storedSession.Snapshot.ClosedAt,
                 storedSession.Snapshot.LateAfterMinutes,
                 storedSession.Snapshot.OtpPaused,
+                storedSession.Snapshot.SessionNumber,
+                storedSession.Snapshot.TotalSessions,
                 storedSession.Snapshot.Students,
                 deviceBindings = storedSession.DeviceBindings,
             },
@@ -445,7 +449,9 @@ public sealed class GoogleSheetsPrimaryStore
                 students.Length,
                 stats,
                 students,
-                []);
+                [],
+                schedule.SessionNumber,
+                schedule.TotalSessions);
             var auditLogs = new[]
             {
                 new AuditLogRecord(
@@ -517,7 +523,7 @@ public sealed class GoogleSheetsPrimaryStore
                 return FailureMessage(payload, response);
             }
 
-            if (ReadInt(payload, "version") < 4)
+            if (ReadInt(payload, "version") < 6)
             {
                 return new GoogleSheetsWriteResult(
                     false,
@@ -666,6 +672,8 @@ public sealed class GoogleSheetsPrimaryStore
         var classCode = ReadString(payload, "classCode").Trim().ToUpperInvariant();
         var subjectCode = ReadString(payload, "subjectCode").Trim().ToUpperInvariant();
         var slot = ReadInt(payload, "slot");
+        var sessionNumber = ReadInt(payload, "sessionNumber");
+        var totalSessions = Math.Max(sessionNumber, ReadInt(payload, "totalSessions", 20));
         var studentsElement = payload.TryGetProperty("students", out var studentArray) &&
                               studentArray.ValueKind == JsonValueKind.Array
             ? studentArray
@@ -763,7 +771,9 @@ public sealed class GoogleSheetsPrimaryStore
             students.Length,
             stats,
             students,
-            publicBindings);
+            publicBindings,
+            sessionNumber,
+            totalSessions);
         return new StoredAttendanceSession(snapshot, auditLogs, bindings);
     }
 

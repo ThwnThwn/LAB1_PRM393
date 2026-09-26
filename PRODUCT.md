@@ -23,7 +23,8 @@ Không giả vờ là FAP chính thức; không dùng Chrome Extension hay phụ
 ## Design Principles
 
 - Luồng chính luôn theo thứ tự tuần → lớp → phiên điểm danh.
-- Mã môn, mã lớp, slot, ngày và trạng thái phải đọc được ngay khi trình chiếu.
+- Mã môn, mã lớp, buổi học trong tiến độ môn (ví dụ 7/20), slot, ngày và trạng thái
+  phải đọc được ngay khi trình chiếu.
 - Dữ liệu demo phải tạo lại được bằng một thao tác và không phụ thuộc dữ liệu thật.
 - Ba bề mặt phải được phân biệt rõ và cùng dùng một backend: desktop giảng viên, web sinh viên, web FAP mô phỏng.
 - Trạng thái hệ thống và lỗi kết nối phải giải thích được bước tiếp theo.

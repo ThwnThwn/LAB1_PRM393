@@ -11,6 +11,7 @@ class FapClassSlot {
   final String room; // e.g. NVH 602, Online
   final String slotTime; // e.g. 7:00-9:15
   final int sessionNumber; // Course session number e.g. 3
+  final int totalSessions; // Planned number of course meetings e.g. 20
   final String instructor; // e.g. PhuongLHK
   final String campus; // e.g. FUHCM
   final String? meetUrl; // Google Meet / Zoom URL
@@ -26,6 +27,7 @@ class FapClassSlot {
     this.room = '',
     this.slotTime = '',
     this.sessionNumber = 1,
+    this.totalSessions = 20,
     this.instructor = '',
     this.campus = 'FUHCM',
     this.meetUrl,
@@ -45,6 +47,7 @@ class FapClassSlot {
       slotTime:
           json['slotTime']?.toString() ?? FapClassSlot.getSlotTimeRange(slot),
       sessionNumber: (json['sessionNumber'] as num?)?.toInt() ?? 1,
+      totalSessions: (json['totalSessions'] as num?)?.toInt() ?? 20,
       instructor: json['instructor']?.toString() ?? '',
       campus: json['campus']?.toString() ?? 'FUHCM',
       meetUrl: json['meetUrl']?.toString(),
@@ -62,6 +65,7 @@ class FapClassSlot {
     'room': room,
     'slotTime': slotTime,
     'sessionNumber': sessionNumber,
+    'totalSessions': totalSessions,
     'instructor': instructor,
     'campus': campus,
     'meetUrl': meetUrl,

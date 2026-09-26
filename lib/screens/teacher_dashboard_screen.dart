@@ -6,6 +6,7 @@ import '../dialogs/import_timetable_image_dialog.dart';
 import '../providers/attendance_provider.dart';
 import '../models/fap_class_slot.dart';
 import '../models/student.dart';
+import 'fap_timetable_screen.dart';
 import '../services/file_download_helper.dart';
 import '../widgets/audit_log_widget.dart';
 import '../widgets/device_security_panel.dart';
@@ -534,6 +535,12 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                   Icons.history_rounded,
                   compact: compact,
                 ),
+                _buildNavItem(
+                  5,
+                  'Thời khóa biểu',
+                  Icons.calendar_month_rounded,
+                  compact: compact,
+                ),
               ],
             ),
           ),
@@ -597,7 +604,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                       Text(
                         slot == null
                             ? 'Bấm một ca trong thời khóa biểu'
-                            : 'Slot ${slot.slot} • ${prov.getStudentCountForClass(slot.classCode)} sinh viên',
+                            : 'Buổi ${slot.sessionNumber}/${slot.totalSessions} • Slot ${slot.slot} • ${prov.getStudentCountForClass(slot.classCode)} sinh viên',
                         style: GoogleFonts.plusJakartaSans(
                           color: _DS.slate500,
                           fontSize: 11,
@@ -802,13 +809,13 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
             onSelected: (slot) => provider.selectTimetableSlot(slot),
             itemBuilder: (context) => provider.classSlots
                 .map(
-                  (slot) => PopupMenuItem<FapClassSlot>(
-                    value: slot,
-                    child: Text(
-                      '${FapClassSlot.getDayName(slot.dayOfWeek)} · Slot ${slot.slot} · ${slot.subjectCode} — ${slot.classCode}',
-                    ),
+                  (slot) => provider.meetingOccurrenceForDate(
+                    slot,
+                    provider.getDateForDay(slot.dayOfWeek),
                   ),
                 )
+                .whereType<FapClassSlot>()
+                .map(_buildTeachingSlotMenuItem)
                 .toList(),
             icon: Icon(
               provider.selectedSlot == null
@@ -897,32 +904,13 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
                     onSelected: (slot) => provider.selectTimetableSlot(slot),
                     itemBuilder: (context) => provider.classSlots
                         .map(
-                          (slot) => PopupMenuItem<FapClassSlot>(
-                            value: slot,
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 58,
-                                  child: Text(
-                                    '${FapClassSlot.getDayName(slot.dayOfWeek)} · S${slot.slot}',
-                                    style: GoogleFonts.jetBrainsMono(
-                                      fontSize: 11,
-                                      color: _DS.slate500,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  '${slot.subjectCode} — ${slot.classCode}',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ],
-                            ),
+                          (slot) => provider.meetingOccurrenceForDate(
+                            slot,
+                            provider.getDateForDay(slot.dayOfWeek),
                           ),
                         )
+                        .whereType<FapClassSlot>()
+                        .map(_buildTeachingSlotMenuItem)
                         .toList(),
                     child: Container(
                       padding: const EdgeInsets.symmetric(
@@ -1177,6 +1165,61 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
     );
   }
 
+  PopupMenuItem<FapClassSlot> _buildTeachingSlotMenuItem(FapClassSlot slot) {
+    return PopupMenuItem<FapClassSlot>(
+      key: ValueKey('teaching-slot-option-${slot.id}'),
+      value: slot,
+      height: 56,
+      child: SizedBox(
+        width: 300,
+        child: Row(
+          children: [
+            SizedBox(
+              width: 68,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    FapClassSlot.getDayName(slot.dayOfWeek),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 11,
+                      color: _DS.slate500,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Slot ${slot.slot}',
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: _DS.slate600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '${slot.subjectCode} — ${slot.classCode}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _DS.onSurface,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _metricBadge(String value, String label, Color bg, Color textColor) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -1403,6 +1446,8 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
         return const SheetsConfigWidget();
       case 4:
         return const AuditLogWidget();
+      case 5:
+        return const FapTimetableScreen();
       default:
         return const SizedBox.shrink();
     }
@@ -1695,14 +1740,19 @@ class _DashboardOverviewTab extends StatelessWidget {
   List<FapClassSlot> _getDateSlots(AttendanceProvider provider, DateTime date) {
     final dayOfWeek = date.weekday; // 1=Mon .. 7=Sun
     final query = searchQuery.trim().toLowerCase();
-    return provider.classSlots.where((slot) {
-      if (slot.dayOfWeek != dayOfWeek) return false;
-      if (query.isEmpty) return true;
-      return slot.subjectCode.toLowerCase().contains(query) ||
-          slot.subjectName.toLowerCase().contains(query) ||
-          slot.classCode.toLowerCase().contains(query) ||
-          slot.room.toLowerCase().contains(query);
-    }).toList()..sort((a, b) => a.slot.compareTo(b.slot));
+    return provider.classSlots
+        .where((slot) {
+          if (slot.dayOfWeek != dayOfWeek) return false;
+          if (query.isEmpty) return true;
+          return slot.subjectCode.toLowerCase().contains(query) ||
+              slot.subjectName.toLowerCase().contains(query) ||
+              slot.classCode.toLowerCase().contains(query) ||
+              slot.room.toLowerCase().contains(query);
+        })
+        .map((slot) => provider.meetingOccurrenceForDate(slot, date))
+        .whereType<FapClassSlot>()
+        .toList()
+      ..sort((a, b) => a.slot.compareTo(b.slot));
   }
 
   // Deduplicated by subjectCode+classCode (unique courses)
@@ -2458,6 +2508,25 @@ class _DashboardOverviewTab extends StatelessWidget {
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: isActive ? _orange800 : _slate600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFEFF6FF),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          'Buổi ${slot.sessionNumber}/${slot.totalSessions}',
+                          style: GoogleFonts.jetBrainsMono(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF1D4ED8),
                           ),
                         ),
                       ),

@@ -56,8 +56,9 @@ try {
         -LogDirectory $logDirectory
 
     $publicHealthUrl = "$($tunnel.Url)/api/health"
-    if (-not (Wait-AttendanceHealth -HealthUrl $publicHealthUrl -Attempts 60 -DelayMilliseconds 500)) {
-        throw "Tunnel da tao nhung API chua truy cap duoc: $publicHealthUrl"
+    Write-Host "Dang cho tunnel san sang tai: $publicHealthUrl" -ForegroundColor Cyan
+    if (-not (Wait-AttendanceHealth -HealthUrl $publicHealthUrl -Attempts 120 -DelayMilliseconds 1000)) {
+        throw "Tunnel da tao nhung API chua truy cap duoc sau 120 giay: $publicHealthUrl"
     }
 
     $env:ATTENDANCE_SERVER_URL = $tunnel.Url

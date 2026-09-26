@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1b2a4a">
   <title>Cổng FAP mô phỏng | Lab 1</title>
-  <link rel="stylesheet" href="./style.css?v=20260922-4">
+  <link rel="stylesheet" href="./style.css?v=20260926-1">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Bỏ qua đến nội dung chính</a>
@@ -63,9 +63,15 @@
               <option value="">Tất cả môn học</option>
             </select>
           </label>
+          <label class="session-picker-field" for="meeting-filter">
+            <span>Chọn buổi học</span>
+            <select id="meeting-filter" aria-describedby="session-picker-help" disabled>
+              <option value="">Chưa có buổi học</option>
+            </select>
+          </label>
         </div>
         <p id="session-picker-help" class="session-picker-help">
-          Chọn lớp và môn học để tự xem ca học mới nhất phù hợp.
+          Chọn lớp, môn học và đúng số buổi cần xem hoặc chỉnh điểm danh.
         </p>
       </div>
 
@@ -77,6 +83,10 @@
         <div>
           <dt>Lớp</dt>
           <dd id="class-code">—</dd>
+        </div>
+        <div>
+          <dt>Buổi học</dt>
+          <dd id="meeting-number">—</dd>
         </div>
         <div>
           <dt>Slot</dt>
@@ -162,6 +172,6 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="./app.js?v=20260922-4" defer></script>
+  <script src="./app.js?v=20260926-2" defer></script>
 </body>
 </html>

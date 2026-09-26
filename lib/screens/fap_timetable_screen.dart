@@ -298,11 +298,6 @@ class FapTimetableScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-              TextButton(
-                onPressed: provider.goToCurrentWeek,
-                child: const Text('Tuần hiện tại'),
-              ),
             ],
           ),
 

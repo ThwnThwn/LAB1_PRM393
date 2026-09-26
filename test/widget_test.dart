@@ -61,6 +61,7 @@ void main() {
     await tester.pump();
 
     expect(find.text('PRN232 - SE1917'), findsWidgets);
+    expect(find.textContaining('Buổi 3/20'), findsWidgets);
     expect(
       find.text(
         'Có thể sửa nhiều dòng trước khi mở phiên QR. Bấm Lưu để ghi một lần lên Google Sheets.',
@@ -89,5 +90,27 @@ void main() {
       find.byKey(const ValueKey('course-card-PRN232-SE1917')),
       findsNothing,
     );
+  });
+
+  testWidgets('teaching slot dropdown fits long course labels', (tester) async {
+    configureDesktopViewport(tester);
+    await tester.pumpWidget(const FapAttendanceApp());
+
+    await tester.tap(find.byKey(const ValueKey('teaching-slot-picker')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('teaching-slot-option-hcm202-tue-1')),
+      findsOneWidget,
+    );
+    expect(find.text('HCM202 — SE1920'), findsWidgets);
+    final hcmOption = find.byKey(
+      const ValueKey('teaching-slot-option-hcm202-tue-1'),
+    );
+    expect(
+      find.descendant(of: hcmOption, matching: find.textContaining('Buổi')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
   });
 }

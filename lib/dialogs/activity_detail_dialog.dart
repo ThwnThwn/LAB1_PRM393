@@ -9,10 +9,7 @@ import '../models/fap_class_slot.dart';
 class ActivityDetailDialog extends StatelessWidget {
   final FapClassSlot slot;
 
-  const ActivityDetailDialog({
-    super.key,
-    required this.slot,
-  });
+  const ActivityDetailDialog({super.key, required this.slot});
 
   static const Color fptOrange = Color(0xFFF36F21);
   static const Color fapNavy = Color(0xFF1B2A4A);
@@ -23,17 +20,12 @@ class ActivityDetailDialog extends StatelessWidget {
     final colorScheme = theme.colorScheme;
 
     return Dialog(
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(28),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       clipBehavior: Clip.antiAlias,
       elevation: 6,
       backgroundColor: colorScheme.surface,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 540,
-          maxHeight: 700,
-        ),
+        constraints: const BoxConstraints(maxWidth: 540, maxHeight: 700),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -46,7 +38,10 @@ class ActivityDetailDialog extends StatelessWidget {
             // Scrollable Content
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 16,
+                ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -57,10 +52,14 @@ class ActivityDetailDialog extends StatelessWidget {
                     // Details Card / Table
                     Container(
                       decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.35,
+                        ),
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(
-                          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                          color: colorScheme.outlineVariant.withValues(
+                            alpha: 0.5,
+                          ),
                         ),
                       ),
                       child: Column(
@@ -142,7 +141,9 @@ class ActivityDetailDialog extends StatelessWidget {
                             content: Row(
                               children: [
                                 Text(
-                                  slot.room.isNotEmpty ? slot.room : (slot.isOnline ? 'Online' : 'N/A'),
+                                  slot.room.isNotEmpty
+                                      ? slot.room
+                                      : (slot.isOnline ? 'Online' : 'N/A'),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontSize: 13.5,
@@ -156,10 +157,14 @@ class ActivityDetailDialog extends StatelessWidget {
                                       vertical: 2,
                                     ),
                                     decoration: BoxDecoration(
-                                      color: Colors.green.withValues(alpha: 0.15),
+                                      color: Colors.green.withValues(
+                                        alpha: 0.15,
+                                      ),
                                       borderRadius: BorderRadius.circular(12),
                                       border: Border.all(
-                                        color: Colors.green.withValues(alpha: 0.5),
+                                        color: Colors.green.withValues(
+                                          alpha: 0.5,
+                                        ),
                                       ),
                                     ),
                                     child: Row(
@@ -195,7 +200,9 @@ class ActivityDetailDialog extends StatelessWidget {
                             icon: Icons.person_outline,
                             label: 'Giảng viên',
                             content: Text(
-                              slot.instructor.isNotEmpty ? slot.instructor : 'Chưa phân công',
+                              slot.instructor.isNotEmpty
+                                  ? slot.instructor
+                                  : 'Chưa phân công',
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 13.5,
@@ -230,7 +237,7 @@ class ActivityDetailDialog extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               child: Text(
-                                'Buổi ${slot.sessionNumber}',
+                                'Buổi ${slot.sessionNumber}/${slot.totalSessions}',
                                 style: TextStyle(
                                   color: colorScheme.onSecondaryContainer,
                                   fontWeight: FontWeight.bold,
@@ -239,7 +246,8 @@ class ActivityDetailDialog extends StatelessWidget {
                               ),
                             ),
                           ),
-                          if (slot.meetUrl != null && slot.meetUrl!.isNotEmpty) ...[
+                          if (slot.meetUrl != null &&
+                              slot.meetUrl!.isNotEmpty) ...[
                             _buildDivider(),
                             _buildDetailRow(
                               context: context,
@@ -264,10 +272,16 @@ class ActivityDetailDialog extends StatelessWidget {
                                     padding: EdgeInsets.zero,
                                     constraints: const BoxConstraints(),
                                     onPressed: () {
-                                      Clipboard.setData(ClipboardData(text: slot.meetUrl!));
-                                      ScaffoldMessenger.of(context).showSnackBar(
+                                      Clipboard.setData(
+                                        ClipboardData(text: slot.meetUrl!),
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
                                         const SnackBar(
-                                          content: Text('Đã sao chép đường dẫn Meet!'),
+                                          content: Text(
+                                            'Đã sao chép đường dẫn Meet!',
+                                          ),
                                           duration: Duration(seconds: 2),
                                         ),
                                       );
@@ -328,10 +342,7 @@ class ActivityDetailDialog extends StatelessWidget {
                 SizedBox(height: 2),
                 Text(
                   'FPT Academic Portal (FAP)',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey,
-                  ),
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
             ),
@@ -355,10 +366,7 @@ class ActivityDetailDialog extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [
-            fapNavy,
-            fapNavy.withValues(alpha: 0.85),
-          ],
+          colors: [fapNavy, fapNavy.withValues(alpha: 0.85)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -405,11 +413,8 @@ class ActivityDetailDialog extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Lớp: ${slot.classCode} • Buổi: ${slot.sessionNumber}',
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                  ),
+                  'Lớp: ${slot.classCode} • Buổi: ${slot.sessionNumber}/${slot.totalSessions}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ],
             ),
@@ -485,10 +490,7 @@ class ActivityDetailDialog extends StatelessWidget {
               icon: const Icon(Icons.qr_code_scanner, size: 20),
               label: const Text(
                 'Bắt đầu điểm danh QR (10s OTP)',
-                style: TextStyle(
-                  fontSize: 14.5,
-                  fontWeight: FontWeight.bold,
-                ),
+                style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.bold),
               ),
               style: FilledButton.styleFrom(
                 backgroundColor: fptOrange,
@@ -500,7 +502,10 @@ class ActivityDetailDialog extends StatelessWidget {
                 elevation: 2,
               ),
               onPressed: () {
-                final provider = Provider.of<AttendanceProvider>(context, listen: false);
+                final provider = Provider.of<AttendanceProvider>(
+                  context,
+                  listen: false,
+                );
                 provider.selectSlotAndStartAttendance(slot);
                 Navigator.of(context).pop();
               },

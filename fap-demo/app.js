@@ -1,5 +1,6 @@
 const POLL_INTERVAL_MS = 5000;
 const SESSION_LIST_POLL_INTERVAL_MS = 30000;
+const DEFAULT_TOTAL_SESSIONS = 20;
 
 // Public launcher uses the query token once to establish an HttpOnly teacher
 // cookie. Remove it from the address bar immediately after the page loads.
@@ -23,7 +24,9 @@ const state = {
   snapshot: null,
   sessions: [],
   selectedSessionId: initialSessionId,
+  selectedMeetingNumber: 0,
   pinnedSessionId: initialSessionId,
+  followLatest: !initialSessionId,
   sessionsLoading: true,
   sessionsRefreshing: false,
   sessionsError: "",
@@ -65,6 +68,7 @@ const elements = {
   toast: document.querySelector("#toast"),
   classFilter: document.querySelector("#class-filter"),
   subjectFilter: document.querySelector("#subject-filter"),
+  meetingFilter: document.querySelector("#meeting-filter"),
   sessionPickerHelp: document.querySelector("#session-picker-help"),
 };
 
@@ -124,6 +128,125 @@ function formatSessionDate(value) {
     month: "2-digit",
     year: "numeric",
   }).format(date);
+}
+
+function positiveInteger(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 ? number : 0;
+}
+
+function compareSessionChronology(left, right) {
+  const dateOrder = String(left.date || "9999-12-31").localeCompare(
+    String(right.date || "9999-12-31"),
+  );
+  if (dateOrder) return dateOrder;
+  const openedOrder = String(left.openedAt || "9999-12-31T23:59:59").localeCompare(
+    String(right.openedAt || "9999-12-31T23:59:59"),
+  );
+  if (openedOrder) return openedOrder;
+  const slotOrder = (Number(left.slot) || 0) - (Number(right.slot) || 0);
+  return slotOrder || String(left.sessionId || "").localeCompare(String(right.sessionId || ""));
+}
+
+function hydrateMeetingNumbers(sessions) {
+  const hydrated = (Array.isArray(sessions) ? sessions : []).map((session) => ({ ...session }));
+  const groups = new Map();
+  for (const session of hydrated) {
+    const key = `${session.classCode || ""}\u0000${session.subjectCode || ""}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(session);
+  }
+
+  for (const group of groups.values()) {
+    group.sort(compareSessionChronology);
+    const total = Math.max(
+      DEFAULT_TOTAL_SESSIONS,
+      group.length,
+      ...group.map((session) => positiveInteger(session.totalSessions)),
+      ...group.map((session) => positiveInteger(session.sessionNumber)),
+    );
+    const used = new Set(
+      group.map((session) => positiveInteger(session.sessionNumber)).filter(Boolean),
+    );
+    let nextNumber = 1;
+    for (const session of group) {
+      let number = positiveInteger(session.sessionNumber);
+      if (!number) {
+        while (used.has(nextNumber) && nextNumber <= total) nextNumber += 1;
+        number = Math.min(nextNumber, total);
+        used.add(number);
+      }
+      session.sessionNumber = number;
+      session.totalSessions = Math.max(total, number);
+    }
+  }
+  return hydrated;
+}
+
+function meetingInfo(session) {
+  const matchingSummary = session?.sessionId
+    ? state.sessions.find((item) => item.sessionId === session.sessionId)
+    : null;
+  const number = positiveInteger(session?.sessionNumber) ||
+    positiveInteger(matchingSummary?.sessionNumber) || 1;
+  const total = Math.max(
+    DEFAULT_TOTAL_SESSIONS,
+    number,
+    positiveInteger(session?.totalSessions),
+    positiveInteger(matchingSummary?.totalSessions),
+  );
+  return { number, total };
+}
+
+function meetingLabel(session, includeCourse = false) {
+  const { number, total } = meetingInfo(session);
+  const meeting = `Buổi ${number}/${total}`;
+  const course = includeCourse
+    ? `${session.subjectCode || "Môn"} · ${session.classCode || "Lớp"} · `
+    : "";
+  const status = session.isOpen ? "Đang mở" : "Đã đóng";
+  return `${course}${meeting} · ${formatSessionDate(session.date)} · Slot ${session.slot ?? "—"} · ${status}`;
+}
+
+function plannedMeetingValue(number) {
+  return `planned:${number}`;
+}
+
+function plannedMeetingNumber(value) {
+  const match = /^planned:(\d+)$/.exec(String(value || ""));
+  return match ? positiveInteger(match[1]) : 0;
+}
+
+function meetingChoices(visibleSessions) {
+  if (!state.classFilter || !state.subjectFilter) {
+    return visibleSessions.map((session) => ({
+      value: session.sessionId,
+      label: meetingLabel(session, true),
+      session,
+    }));
+  }
+
+  const total = Math.max(
+    DEFAULT_TOTAL_SESSIONS,
+    ...visibleSessions.map((session) => positiveInteger(session.totalSessions)),
+    ...visibleSessions.map((session) => positiveInteger(session.sessionNumber)),
+  );
+  const sessionsByMeeting = new Map();
+  for (const session of visibleSessions) {
+    const number = positiveInteger(session.sessionNumber);
+    if (number && !sessionsByMeeting.has(number)) sessionsByMeeting.set(number, session);
+  }
+  return Array.from({ length: total }, (_, index) => {
+    const number = index + 1;
+    const session = sessionsByMeeting.get(number);
+    return session
+      ? { value: session.sessionId, label: meetingLabel(session), session }
+      : {
+          value: plannedMeetingValue(number),
+          label: `Buổi ${number}/${total} · Chưa có phiên`,
+          session: null,
+        };
+  });
 }
 
 function setText(selector, value) {
@@ -223,10 +346,28 @@ function renderSessionPicker() {
   if (elements.subjectFilter.value !== state.subjectFilter) elements.subjectFilter.value = state.subjectFilter;
 
   const visibleSessions = filteredSessions();
+  const choices = meetingChoices(visibleSessions);
+  const meetingSignature = choices.map((choice) => `${choice.value}:${choice.label}`).join("|");
+  if (elements.meetingFilter.dataset.optionsSignature !== meetingSignature) {
+    elements.meetingFilter.innerHTML = choices.length === 0
+      ? '<option value="">Chưa có buổi học</option>'
+      : choices.map((choice) => `
+          <option value="${escapeHtml(choice.value)}">${escapeHtml(choice.label)}</option>
+        `).join("");
+    elements.meetingFilter.dataset.optionsSignature = meetingSignature;
+  }
+  const selectedVisible = visibleSessions.some(
+    (session) => session.sessionId === state.selectedSessionId,
+  );
+  const selectedPlanned = !selectedVisible && state.selectedMeetingNumber > 0
+    ? plannedMeetingValue(state.selectedMeetingNumber)
+    : "";
+  elements.meetingFilter.value = selectedVisible ? state.selectedSessionId : selectedPlanned;
   const hasUnsavedChanges = state.dirty.size > 0;
   const filtersDisabled = state.sessionsLoading || state.saving || hasUnsavedChanges || state.sessions.length === 0;
   elements.classFilter.disabled = filtersDisabled;
   elements.subjectFilter.disabled = filtersDisabled || subjects.length === 0;
+  elements.meetingFilter.disabled = filtersDisabled || choices.length === 0;
   if (state.sessionsError) {
     elements.sessionPickerHelp.textContent = `Không tải được danh sách lớp: ${state.sessionsError}`;
   } else if (hasUnsavedChanges) {
@@ -234,11 +375,13 @@ function renderSessionPicker() {
   } else if (visibleSessions.length === 0 && !state.sessionsLoading) {
     elements.sessionPickerHelp.textContent = "Không có ca học phù hợp. Hãy chọn lớp hoặc môn học khác.";
   } else if (state.pinnedSessionId) {
-    elements.sessionPickerHelp.textContent = "Đang xem ca học từ liên kết. Đổi lớp hoặc môn học để tự theo ca mới nhất.";
-  } else if (state.classFilter && subjects.length === 1) {
-    elements.sessionPickerHelp.textContent = "Lớp này chỉ có một môn học; đang tự theo ca mới nhất. Ngày và slot hiển thị bên dưới.";
+    elements.sessionPickerHelp.textContent = "Đang xem đúng buổi học từ liên kết được chia sẻ.";
+  } else if (!state.selectedSessionId && state.selectedMeetingNumber > 0) {
+    elements.sessionPickerHelp.textContent = `Buổi ${state.selectedMeetingNumber} chưa có phiên. Hãy mở buổi này từ desktop app.`;
+  } else if (!state.followLatest && selectedVisible) {
+    elements.sessionPickerHelp.textContent = "Đang giữ nguyên buổi học đã chọn. Chọn buổi khác để xem hoặc chỉnh điểm danh.";
   } else {
-    elements.sessionPickerHelp.textContent = "Đang tự theo ca mới nhất phù hợp. Ngày và slot hiển thị bên dưới.";
+    elements.sessionPickerHelp.textContent = "Đang tự theo buổi học mới nhất phù hợp. Bạn có thể chọn một buổi cụ thể.";
   }
 }
 
@@ -250,13 +393,14 @@ async function loadSessions({ manual = false } = {}) {
   try {
     const response = await fetch(API.sessions, { cache: "no-store" });
     const body = await readJson(response);
-    state.sessions = Array.isArray(body.sessions) ? body.sessions : [];
+    state.sessions = hydrateMeetingNumbers(body.sessions);
     if (state.snapshot?.sessionId) upsertSessionSummary(state.snapshot);
     if (!state.filtersHydrated) {
       const linked = state.sessions.find((session) => session.sessionId === state.pinnedSessionId);
       if (linked) {
         state.classFilter = linked.classCode || "";
         state.subjectFilter = linked.subjectCode || "";
+        state.followLatest = false;
         state.filtersHydrated = true;
       } else if (!state.pinnedSessionId) {
         state.filtersHydrated = true;
@@ -306,8 +450,25 @@ async function loadServiceStatus() {
 function upsertSessionSummary(snapshot) {
   if (!snapshot?.sessionId) return;
   const index = state.sessions.findIndex((session) => session.sessionId === snapshot.sessionId);
-  if (index < 0) state.sessions.unshift(snapshot);
-  else state.sessions[index] = { ...state.sessions[index], ...snapshot };
+  if (index < 0) {
+    state.sessions.unshift({ ...snapshot });
+  } else {
+    const current = state.sessions[index];
+    const incomingNumber = positiveInteger(snapshot.sessionNumber);
+    const currentNumber = positiveInteger(current.sessionNumber);
+    state.sessions[index] = {
+      ...current,
+      ...snapshot,
+      sessionNumber: incomingNumber || currentNumber,
+      totalSessions: Math.max(
+        DEFAULT_TOTAL_SESSIONS,
+        incomingNumber || currentNumber,
+        positiveInteger(snapshot.totalSessions),
+        positiveInteger(current.totalSessions),
+      ),
+    };
+  }
+  state.sessions = hydrateMeetingNumbers(state.sessions);
 }
 
 function mergeSnapshot(snapshot, force) {
@@ -321,6 +482,7 @@ function mergeSnapshot(snapshot, force) {
 
   state.snapshot = snapshot;
   upsertSessionSummary(snapshot);
+  state.selectedMeetingNumber = meetingInfo(snapshot).number;
   let conflictingRows = 0;
   for (const student of snapshot.students || []) {
     if (state.dirty.has(student.rollNo) &&
@@ -361,6 +523,14 @@ function applySuccessfulSnapshot(snapshot, force, source = "poll") {
 }
 
 async function refreshData({ manual = false, force = false } = {}) {
+  if (!state.selectedSessionId && state.selectedMeetingNumber > 0 && !state.followLatest) {
+    state.loading = false;
+    render();
+    if (manual) {
+      showToast(`Buổi ${state.selectedMeetingNumber} chưa có phiên trên desktop app.`);
+    }
+    return;
+  }
   if (state.filteredEmpty) {
     state.loading = false;
     render();
@@ -393,7 +563,7 @@ async function refreshData({ manual = false, force = false } = {}) {
       : POLL_INTERVAL_MS;
     state.nextRetryAt = Date.now() + state.retryDelayMs;
     const detail = error.message;
-    const needsScriptUpdate = /Apps Script.*(bản cũ|phiên bản 4|cập nhật)/i.test(detail);
+    const needsScriptUpdate = /Apps Script.*(bản cũ|phiên bản 6|cập nhật)/i.test(detail);
     setConnection("error", needsScriptUpdate ? "Apps Script cần cập nhật" : "Đang tự kết nối lại");
     showSystemMessage(`Chưa tải được điểm danh: ${detail} Trang sẽ tự thử lại, không cần bấm Nạp lại.`);
     render();
@@ -408,22 +578,36 @@ async function refreshData({ manual = false, force = false } = {}) {
 function renderSession() {
   const snapshot = state.snapshot;
   const hasSession = Boolean(snapshot?.sessionId);
-  setText("#subject-code", hasSession ? snapshot.subjectCode || "—" : "—");
-  setText("#class-code", hasSession ? snapshot.classCode || "—" : "—");
+  const hasPlannedMeeting = !hasSession && state.selectedMeetingNumber > 0 &&
+    Boolean(state.classFilter && state.subjectFilter);
+  setText("#subject-code", hasSession
+    ? snapshot.subjectCode || "—"
+    : (hasPlannedMeeting ? state.subjectFilter : "—"));
+  setText("#class-code", hasSession
+    ? snapshot.classCode || "—"
+    : (hasPlannedMeeting ? state.classFilter : "—"));
+  const { number: sessionNumber, total: totalSessions } = meetingInfo(snapshot);
+  setText("#meeting-number", hasSession
+    ? `Buổi ${sessionNumber}/${totalSessions}`
+    : (hasPlannedMeeting ? `Buổi ${state.selectedMeetingNumber}/${DEFAULT_TOTAL_SESSIONS}` : "—"));
   setText("#slot-number", hasSession ? `Slot ${snapshot.slot ?? "—"}` : "—");
   setText("#session-date", hasSession ? formatSessionDate(snapshot.date) : "—");
 
   const sessionStatus = document.querySelector("#session-status");
   sessionStatus.textContent = hasSession
     ? (snapshot.isOpen ? "Đang mở" : "Đã đóng")
-    : (state.loading ? "Đang tải" : (state.connected ? "Chưa có ca học" : "Đang kết nối lại"));
+    : (hasPlannedMeeting
+        ? "Chưa có phiên"
+        : (state.loading ? "Đang tải" : (state.connected ? "Chưa có ca học" : "Đang kết nối lại")));
   sessionStatus.className = `status-chip ${hasSession ? (snapshot.isOpen ? "open" : "closed") : "neutral"}`;
 
   setText(
     "#session-description",
     hasSession
-      ? `${snapshot.subjectCode || "Môn học"} · ${snapshot.classCode || "Lớp học"} · Slot ${snapshot.slot ?? "—"}`
-      : (state.filteredEmpty
+      ? `${snapshot.subjectCode || "Môn học"} · ${snapshot.classCode || "Lớp học"} · Buổi ${sessionNumber}/${totalSessions} · Slot ${snapshot.slot ?? "—"}`
+      : (hasPlannedMeeting
+        ? `${state.subjectFilter} · ${state.classFilter} · Buổi ${state.selectedMeetingNumber}/${DEFAULT_TOTAL_SESSIONS} chưa được mở trên desktop app.`
+        : state.filteredEmpty
         ? "Không có ca học phù hợp với lớp và môn học đã chọn."
         : "Mở một phiên điểm danh trên desktop app để bắt đầu.")
   );
@@ -453,7 +637,9 @@ function renderRows() {
 
   const students = filteredStudents();
   if (!state.snapshot?.sessionId) {
-    elements.rows.innerHTML = state.filteredEmpty
+    elements.rows.innerHTML = state.selectedMeetingNumber > 0 && !state.followLatest
+      ? `<tr class="empty-row"><td colspan="9">Buổi ${state.selectedMeetingNumber}/${DEFAULT_TOTAL_SESSIONS} chưa có phiên điểm danh. Hãy mở từ desktop app.</td></tr>`
+      : state.filteredEmpty
       ? '<tr class="empty-row"><td colspan="9">Không có ca học phù hợp. Hãy chọn lớp hoặc môn học khác.</td></tr>'
       : state.connected
       ? '<tr class="empty-row"><td colspan="9">Chưa có ca học. Hãy mở phiên điểm danh trên desktop app.</td></tr>'
@@ -579,11 +765,15 @@ async function selectSession(sessionId, toastMessage = "") {
   }
 
   state.filteredEmpty = Boolean(state.classFilter || state.subjectFilter) && filteredSessions().length === 0;
+  const summary = state.sessions.find((session) => session.sessionId === sessionId);
+  const meetingNumber = positiveInteger(summary?.sessionNumber);
   if (sessionId === state.selectedSessionId && !state.filteredEmpty) {
+    state.selectedMeetingNumber = meetingNumber;
     renderSessionPicker();
     return true;
   }
   state.selectedSessionId = sessionId;
+  state.selectedMeetingNumber = meetingNumber;
   state.selectionSerial += 1;
   state.snapshot = null;
   state.drafts.clear();
@@ -597,10 +787,45 @@ async function selectSession(sessionId, toastMessage = "") {
   return true;
 }
 
+async function selectPlannedMeeting(number, toastMessage = "") {
+  if (state.saving || state.dirty.size > 0) {
+    renderSessionPicker();
+    if (toastMessage) showToast("Hãy lưu hoặc hoàn tác thay đổi trước khi đổi buổi học.", true);
+    return false;
+  }
+  state.selectedSessionId = "";
+  state.selectedMeetingNumber = number;
+  state.filteredEmpty = false;
+  state.selectionSerial += 1;
+  state.snapshot = null;
+  state.drafts.clear();
+  state.dirty.clear();
+  state.baseStatuses.clear();
+  state.loading = false;
+  updateSessionUrl();
+  render();
+  if (toastMessage) showToast(toastMessage);
+  return true;
+}
+
 async function applySessionFilters() {
   const visible = filteredSessions();
-  const target = !state.classFilter && !state.subjectFilter
-    ? ""
+  const selectedStillVisible = visible.some(
+    (session) => session.sessionId === state.selectedSessionId,
+  );
+  if (!state.followLatest && state.selectedMeetingNumber > 0) {
+    const matchingMeeting = visible.find(
+      (session) => positiveInteger(session.sessionNumber) === state.selectedMeetingNumber,
+    );
+    if (matchingMeeting) {
+      await selectSession(matchingMeeting.sessionId);
+    } else {
+      await selectPlannedMeeting(state.selectedMeetingNumber);
+    }
+    return;
+  }
+  const target = !state.followLatest && selectedStillVisible
+    ? state.selectedSessionId
     : visible[0]?.sessionId || "";
   await selectSession(target);
 }
@@ -612,6 +837,7 @@ elements.classFilter.addEventListener("change", async () => {
   }
   state.filtersHydrated = true;
   state.pinnedSessionId = "";
+  state.followLatest = true;
   updateSessionUrl();
   state.classFilter = elements.classFilter.value;
   const subjects = availableSubjects();
@@ -626,9 +852,32 @@ elements.subjectFilter.addEventListener("change", async () => {
   }
   state.filtersHydrated = true;
   state.pinnedSessionId = "";
+  state.followLatest = true;
   updateSessionUrl();
   state.subjectFilter = elements.subjectFilter.value;
   await applySessionFilters();
+});
+
+elements.meetingFilter.addEventListener("change", async () => {
+  if (state.dirty.size > 0 || state.saving) {
+    renderSessionPicker();
+    return;
+  }
+  const selectedValue = elements.meetingFilter.value;
+  if (!selectedValue) return;
+  state.filtersHydrated = true;
+  state.pinnedSessionId = "";
+  state.followLatest = false;
+  updateSessionUrl();
+  const plannedNumber = plannedMeetingNumber(selectedValue);
+  if (plannedNumber) {
+    await selectPlannedMeeting(
+      plannedNumber,
+      `Buổi ${plannedNumber}/${DEFAULT_TOTAL_SESSIONS} chưa có phiên.`,
+    );
+  } else {
+    await selectSession(selectedValue, "Đã chuyển sang buổi học đã chọn.");
+  }
 });
 
 elements.refreshButton.addEventListener("click", async () => {
@@ -656,7 +905,13 @@ function connectLiveUpdates() {
       if (!snapshot?.sessionId) return;
       upsertSessionSummary(snapshot);
       if (state.pinnedSessionId && snapshot.sessionId !== state.pinnedSessionId) return;
-      if (state.classFilter || state.subjectFilter) {
+      if (!state.followLatest && !state.selectedSessionId && state.selectedMeetingNumber > 0) {
+        if (!sessionMatchesFilters(snapshot) ||
+            meetingInfo(snapshot).number !== state.selectedMeetingNumber) return;
+        state.selectedSessionId = snapshot.sessionId;
+        state.selectionSerial += 1;
+      }
+      if (state.followLatest && (state.classFilter || state.subjectFilter)) {
         if (!sessionMatchesFilters(snapshot)) return;
         const latest = filteredSessions()[0];
         if (latest?.sessionId !== state.selectedSessionId) {

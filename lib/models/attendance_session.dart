@@ -3,6 +3,8 @@ class AttendanceSession {
   final String subjectCode; // e.g. PRN231 / PRN211
   final int slot; // e.g. 1, 2, 3, 4, 5
   final DateTime date;
+  int sessionNumber; // Course meeting number, independent from the daily slot
+  int totalSessions;
   String activeOtp; // 6-digit OTP currently valid
   int otpRemainingSeconds; // 10s down to 0
   String? serverSessionId;
@@ -15,6 +17,8 @@ class AttendanceSession {
     required this.subjectCode,
     required this.slot,
     required this.date,
+    this.sessionNumber = 1,
+    this.totalSessions = 20,
     this.activeOtp = '000000',
     this.otpRemainingSeconds = 10,
     this.serverSessionId,
@@ -23,5 +27,6 @@ class AttendanceSession {
     this.closedAt,
   });
 
-  String get sessionTitle => '$subjectCode - $classCode (Slot $slot)';
+  String get sessionTitle =>
+      '$subjectCode - $classCode (Buổi $sessionNumber/$totalSessions · Slot $slot)';
 }

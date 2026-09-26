@@ -26,7 +26,7 @@ class _FapAttendanceDemoScreenState extends State<FapAttendanceDemoScreen> {
   void _ensureSession(AttendanceProvider provider) {
     final session = provider.currentSession;
     final key =
-        '${session.classCode}|${session.subjectCode}|${session.slot}|${session.date}';
+        '${session.classCode}|${session.subjectCode}|${session.sessionNumber}|${session.slot}|${session.date}';
     if (_sessionKey == key) return;
     _sessionKey = key;
     _marks
@@ -362,7 +362,7 @@ class _FapAttendanceDemoScreenState extends State<FapAttendanceDemoScreen> {
             child: Text(
               provider.selectedSlot == null
                   ? 'Chưa chọn ca học'
-                  : '${session.subjectCode} • ${session.classCode} • Slot ${session.slot}',
+                  : '${session.subjectCode} • ${session.classCode} • Buổi ${session.sessionNumber}/${session.totalSessions} • Slot ${session.slot}',
               style: const TextStyle(
                 color: Color(0xFF1B2A4A),
                 fontWeight: FontWeight.w700,

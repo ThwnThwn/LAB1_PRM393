@@ -10,7 +10,9 @@ class StudentCheckinScreen extends StatefulWidget {
 }
 
 class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
-  final _emailController = TextEditingController(text: 'minhnbse182173@fpt.edu.vn');
+  final _emailController = TextEditingController(
+    text: 'minhnbse182173@fpt.edu.vn',
+  );
   final _otpController = TextEditingController();
   Map<String, dynamic>? _checkinResult;
 
@@ -55,7 +57,7 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                   color: Colors.black.withValues(alpha: 0.08),
                   blurRadius: 20,
                   spreadRadius: 5,
-                )
+                ),
               ],
             ),
             child: Column(
@@ -85,7 +87,7 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Lớp: ${session.classCode} | Môn: ${session.subjectCode} (Slot ${session.slot})',
+                  'Lớp: ${session.classCode} | Môn: ${session.subjectCode} | Buổi ${session.sessionNumber}/${session.totalSessions} | Slot ${session.slot}',
                   style: TextStyle(color: Colors.grey[600], fontSize: 13),
                 ),
                 const SizedBox(height: 24),
@@ -98,7 +100,9 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                     labelText: 'Email của sinh viên',
                     hintText: 'ví dụ: sinhvien@gmail.com',
                     prefixIcon: const Icon(Icons.email_outlined),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -116,7 +120,9 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                     labelText: 'Mã OTP (6 chữ số trên màn hình)',
                     hintText: '******',
                     prefixIcon: const Icon(Icons.lock_clock_outlined),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     counterText: '',
                   ),
                 ),
@@ -137,7 +143,10 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                     ),
                     child: const Text(
                       'XÁC NHẬN ĐIỂM DANH',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
@@ -149,17 +158,25 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: _checkinResult!['success'] ? Colors.green[50] : Colors.red[50],
+                      color: _checkinResult!['success']
+                          ? Colors.green[50]
+                          : Colors.red[50],
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _checkinResult!['success'] ? Colors.green : Colors.red,
+                        color: _checkinResult!['success']
+                            ? Colors.green
+                            : Colors.red,
                       ),
                     ),
                     child: Column(
                       children: [
                         Icon(
-                          _checkinResult!['success'] ? Icons.check_circle : Icons.error_outline,
-                          color: _checkinResult!['success'] ? Colors.green[700] : Colors.red[700],
+                          _checkinResult!['success']
+                              ? Icons.check_circle
+                              : Icons.error_outline,
+                          color: _checkinResult!['success']
+                              ? Colors.green[700]
+                              : Colors.red[700],
                           size: 36,
                         ),
                         const SizedBox(height: 8),
@@ -168,20 +185,25 @@ class _StudentCheckinScreenState extends State<StudentCheckinScreen> {
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            color: _checkinResult!['success'] ? Colors.green[900] : Colors.red[900],
+                            color: _checkinResult!['success']
+                                ? Colors.green[900]
+                                : Colors.red[900],
                           ),
                         ),
                         if (_checkinResult!['student'] != null) ...[
                           const SizedBox(height: 8),
                           Text(
                             'Thời gian: ${DateTime.now().hour}:${DateTime.now().minute.toString().padLeft(2, '0')}:${DateTime.now().second.toString().padLeft(2, '0')}',
-                            style: const TextStyle(fontSize: 12, color: Colors.grey),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
                           ),
-                        ]
+                        ],
                       ],
                     ),
                   ),
-                ]
+                ],
               ],
             ),
           ),

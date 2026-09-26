@@ -19,6 +19,8 @@ import 'otp_provider.dart';
 class AttendanceProvider extends ChangeNotifier {
   static const String _timetablePreferenceKey =
       'fap_attendance_teacher_timetable_v1';
+  static const String _timetableAnchorWeekPreferenceKey =
+      'fap_attendance_teacher_timetable_anchor_week_v1';
   late AttendanceSession _currentSession;
   List<Student> _students = [];
   Timer? _dashboardPollTimer;
@@ -64,6 +66,7 @@ class AttendanceProvider extends ChangeNotifier {
   late final Future<void> _timetableLoadFuture;
   FapClassSlot? _selectedSlot;
   DateTime _currentWeekStart = _getWeekStart(DateTime.now());
+  DateTime _timetableMeetingAnchorWeekStart = _getWeekStart(DateTime.now());
   String? _classCodeFilter;
 
   // Per-class student rosters: classCode -> List<Student>
@@ -102,6 +105,8 @@ class AttendanceProvider extends ChangeNotifier {
   List<FapClassSlot> get classSlots => _classSlots;
   FapClassSlot? get selectedSlot => _selectedSlot;
   DateTime get currentWeekStart => _currentWeekStart;
+  DateTime get timetableMeetingAnchorWeekStart =>
+      _timetableMeetingAnchorWeekStart;
   String? get classCodeFilter => _classCodeFilter;
   List<String> get availableClassCodes {
     return _cachedClassCodes ??= () {
@@ -247,6 +252,7 @@ class AttendanceProvider extends ChangeNotifier {
 
   /// Get slots for a specific day column and slot row in the timetable
   List<FapClassSlot> getSlotsForCell(int dayOfWeek, int slotNumber) {
+    final date = getDateForDay(dayOfWeek);
     return _classSlots
         .where(
           (s) =>
@@ -255,6 +261,8 @@ class AttendanceProvider extends ChangeNotifier {
               (_classCodeFilter == null ||
                   s.classCode.toUpperCase() == _classCodeFilter),
         )
+        .map((slot) => meetingOccurrenceForDate(slot, date))
+        .whereType<FapClassSlot>()
         .toList();
   }
 
@@ -307,6 +315,74 @@ class AttendanceProvider extends ChangeNotifier {
     return _currentWeekStart.add(Duration(days: dayOfWeek - 1));
   }
 
+  /// Resolves a recurring timetable template into its chronological course
+  /// meeting for [date]. The template's meeting number anchors the current
+  /// timetable week; other weeks advance by the number of weekly meetings.
+  FapClassSlot? meetingOccurrenceForDate(FapClassSlot template, DateTime date) {
+    final targetDate = DateUtils.dateOnly(date);
+    if (targetDate.weekday != template.dayOfWeek) return null;
+
+    final courseSlots =
+        _classSlots.where((slot) {
+          return slot.classCode.trim().toUpperCase() ==
+                  template.classCode.trim().toUpperCase() &&
+              slot.subjectCode.trim().toUpperCase() ==
+                  template.subjectCode.trim().toUpperCase();
+        }).toList()..sort((left, right) {
+          final dayOrder = left.dayOfWeek.compareTo(right.dayOfWeek);
+          if (dayOrder != 0) return dayOrder;
+          final slotOrder = left.slot.compareTo(right.slot);
+          if (slotOrder != 0) return slotOrder;
+          return left.id.compareTo(right.id);
+        });
+    if (courseSlots.isEmpty) return null;
+
+    final templateIndex = courseSlots.indexWhere(
+      (slot) => slot.id == template.id,
+    );
+    if (templateIndex < 0) return null;
+
+    var anchorMeetingNumber = courseSlots.first.sessionNumber;
+    var totalSessions = courseSlots.first.totalSessions;
+    for (final slot in courseSlots.skip(1)) {
+      if (slot.sessionNumber < anchorMeetingNumber) {
+        anchorMeetingNumber = slot.sessionNumber;
+      }
+      if (slot.totalSessions > totalSessions) {
+        totalSessions = slot.totalSessions;
+      }
+    }
+    if (anchorMeetingNumber < 1) anchorMeetingNumber = 1;
+    if (totalSessions < anchorMeetingNumber) {
+      totalSessions = anchorMeetingNumber;
+    }
+
+    final targetWeekStart = _getWeekStart(targetDate);
+    final weekOffset =
+        targetWeekStart.difference(_timetableMeetingAnchorWeekStart).inDays ~/
+        7;
+    final meetingNumber =
+        anchorMeetingNumber + weekOffset * courseSlots.length + templateIndex;
+    if (meetingNumber < 1 || meetingNumber > totalSessions) return null;
+
+    return FapClassSlot(
+      id: template.id,
+      subjectCode: template.subjectCode,
+      subjectName: template.subjectName,
+      classCode: template.classCode,
+      slot: template.slot,
+      dayOfWeek: template.dayOfWeek,
+      room: template.room,
+      slotTime: template.slotTime,
+      sessionNumber: meetingNumber,
+      totalSessions: totalSessions,
+      instructor: template.instructor,
+      campus: template.campus,
+      meetUrl: template.meetUrl,
+      isOnline: template.isOnline,
+    );
+  }
+
   // OTP engine moved to OtpProvider (Fix 1).
 
   // --- Search & Filter ---
@@ -327,6 +403,8 @@ class AttendanceProvider extends ChangeNotifier {
       subjectCode: subjectCode ?? _currentSession.subjectCode,
       slot: slot ?? _currentSession.slot,
       date: _currentSession.date,
+      sessionNumber: _currentSession.sessionNumber,
+      totalSessions: _currentSession.totalSessions,
       activeOtp: _currentSession.activeOtp,
       otpRemainingSeconds: _currentSession.otpRemainingSeconds,
       serverSessionId: _currentSession.serverSessionId,
@@ -595,6 +673,21 @@ class AttendanceProvider extends ChangeNotifier {
           total + (binding['blockedAttempts'] as num? ?? 0).toInt(),
     );
     _currentSession.serverSessionId = snapshot['sessionId']?.toString();
+    final serverSessionNumber = (snapshot['sessionNumber'] as num?)?.toInt();
+    final serverTotalSessions = (snapshot['totalSessions'] as num?)?.toInt();
+    if (_selectedSlot != null) {
+      // The calendar occurrence is chronological and wins over legacy rows
+      // whose MeetingNumber was saved before date-based numbering existed.
+      _currentSession.sessionNumber = _selectedSlot!.sessionNumber;
+      _currentSession.totalSessions = _selectedSlot!.totalSessions;
+    } else if (serverSessionNumber != null && serverSessionNumber > 0) {
+      _currentSession.sessionNumber = serverSessionNumber;
+    }
+    if (_selectedSlot == null &&
+        serverTotalSessions != null &&
+        serverTotalSessions > 0) {
+      _currentSession.totalSessions = serverTotalSessions;
+    }
     _currentSession.isOpen = snapshot['isOpen'] == true;
     _currentSession.openedAt = DateTime.tryParse(
       snapshot['openedAt']?.toString() ?? '',
@@ -705,54 +798,63 @@ class AttendanceProvider extends ChangeNotifier {
   /// Select a timetable slot without opening or closing an attendance session.
   /// Returns false when another session is currently open.
   bool selectTimetableSlot(FapClassSlot slot) {
-    if ((_selectedSlot?.id != slot.id ||
-            !DateUtils.isSameDay(
-              _currentSession.date,
-              getDateForDay(slot.dayOfWeek),
-            )) &&
+    final sessionDate = getDateForDay(slot.dayOfWeek);
+    final occurrence = meetingOccurrenceForDate(slot, sessionDate);
+    if (occurrence == null) {
+      _lastCheckinNotification =
+          'Ngày này nằm ngoài ${slot.totalSessions} buổi của môn ${slot.subjectCode}.';
+      notifyListeners();
+      return false;
+    }
+    if ((_selectedSlot?.id != occurrence.id ||
+            !DateUtils.isSameDay(_currentSession.date, sessionDate)) &&
         (hasUnsavedAttendanceChanges || _savingAttendanceDraft)) {
       _lastCheckinNotification =
           '⚠️ Còn $unsavedAttendanceCount dòng chưa lưu. Hãy lưu hoặc hủy bản nháp trước khi đổi ca.';
       notifyListeners();
       return false;
     }
-    if (_currentSession.isOpen && _selectedSlot?.id != slot.id) {
+    if (_currentSession.isOpen && _selectedSlot?.id != occurrence.id) {
       _lastCheckinNotification =
           'Hãy đóng phiên ${_currentSession.subjectCode} - ${_currentSession.classCode} trước khi chọn ca khác.';
       notifyListeners();
       return false;
     }
 
-    if (_currentSession.isOpen && _selectedSlot?.id == slot.id) return true;
-    if (_selectedSlot?.id == slot.id &&
+    if (_currentSession.isOpen && _selectedSlot?.id == occurrence.id) {
+      return true;
+    }
+    if (_selectedSlot?.id == occurrence.id &&
         _currentSession.serverSessionId != null &&
-        DateUtils.isSameDay(
-          _currentSession.date,
-          getDateForDay(slot.dayOfWeek),
-        )) {
+        DateUtils.isSameDay(_currentSession.date, sessionDate)) {
       return true;
     }
 
     _dashboardPollTimer?.cancel();
     unawaited(_liveService.disconnect());
-    _selectedSlot = slot;
+    _selectedSlot = occurrence;
     _latestServerStudents.clear();
     _otpProvider?.resume();
     _deviceBindings = [];
     _currentSession = AttendanceSession(
-      classCode: slot.classCode,
-      subjectCode: slot.subjectCode,
-      slot: slot.slot,
-      date: getDateForDay(slot.dayOfWeek),
+      classCode: occurrence.classCode,
+      subjectCode: occurrence.subjectCode,
+      slot: occurrence.slot,
+      date: sessionDate,
+      sessionNumber: occurrence.sessionNumber,
+      totalSessions: occurrence.totalSessions,
     );
 
     _students = [];
     _studentsVersion++;
     _loadingSelectedSession = true;
     _lastCheckinNotification =
-        'Đang tải ${slot.subjectCode} - ${slot.classCode} (Slot ${slot.slot}) từ Google Sheets...';
+        'Đang tải ${occurrence.subjectCode} - ${occurrence.classCode} (Buổi ${occurrence.sessionNumber}/${occurrence.totalSessions} · Slot ${occurrence.slot}) từ Google Sheets...';
     notifyListeners();
-    _rosterLoadFuture = _loadPersistedClassRoster(slot.classCode, slot.id);
+    _rosterLoadFuture = _loadPersistedClassRoster(
+      occurrence.classCode,
+      occurrence.id,
+    );
     unawaited(_rosterLoadFuture);
     return true;
   }
@@ -861,7 +963,7 @@ class AttendanceProvider extends ChangeNotifier {
 
   /// Select a timetable slot and switch to attendance mode.
   void selectSlotAndStartAttendance(FapClassSlot slot) {
-    if (_selectedSlot?.id != slot.id && !selectTimetableSlot(slot)) return;
+    if (!selectTimetableSlot(slot)) return;
 
     // Trigger navigation to attendance tab
     onNavigateToAttendance?.call();
@@ -922,6 +1024,7 @@ class AttendanceProvider extends ChangeNotifier {
             room: slot.room.trim().toUpperCase(),
             slotTime: FapClassSlot.getSlotTimeRange(slot.slot),
             sessionNumber: slot.sessionNumber,
+            totalSessions: slot.totalSessions,
             instructor: slot.instructor.trim(),
             campus: slot.campus.trim().isEmpty ? 'FUHCM' : slot.campus.trim(),
             meetUrl: slot.meetUrl,
@@ -932,6 +1035,8 @@ class AttendanceProvider extends ChangeNotifier {
     if (normalized.isEmpty) {
       throw StateError('Không có ca học hợp lệ để nhập.');
     }
+
+    _timetableMeetingAnchorWeekStart = _getWeekStart(DateTime.now());
 
     final next = replaceExisting ? <FapClassSlot>[] : [..._classSlots];
     final keys = next.map(_slotIdentity).toSet();
@@ -975,6 +1080,18 @@ class AttendanceProvider extends ChangeNotifier {
   Future<void> _loadSavedTimetable() async {
     try {
       final preferences = await SharedPreferences.getInstance();
+      final encodedAnchor = preferences.getString(
+        _timetableAnchorWeekPreferenceKey,
+      );
+      final parsedAnchor = DateTime.tryParse(encodedAnchor ?? '');
+      if (parsedAnchor != null) {
+        _timetableMeetingAnchorWeekStart = _getWeekStart(parsedAnchor);
+      } else {
+        await preferences.setString(
+          _timetableAnchorWeekPreferenceKey,
+          _timetableMeetingAnchorWeekStart.toIso8601String(),
+        );
+      }
       final encoded = preferences.getString(_timetablePreferenceKey);
       if (encoded == null || encoded.trim().isEmpty) return;
       final decoded = jsonDecode(encoded);
@@ -1006,6 +1123,10 @@ class AttendanceProvider extends ChangeNotifier {
       await preferences.setString(
         _timetablePreferenceKey,
         jsonEncode(_classSlots.map((slot) => slot.toJson()).toList()),
+      );
+      await preferences.setString(
+        _timetableAnchorWeekPreferenceKey,
+        _timetableMeetingAnchorWeekStart.toIso8601String(),
       );
     } on MissingPluginException {
       // Unit tests and non-plugin isolates do not register SharedPreferences.
@@ -1531,6 +1652,7 @@ class AttendanceProvider extends ChangeNotifier {
         dayOfWeek: 1,
         room: 'NVH 602',
         slotTime: '9:30 - 11:45',
+        sessionNumber: 3,
         instructor: 'PhuongLHK',
         campus: 'FUHCM',
       ),
@@ -1543,6 +1665,7 @@ class AttendanceProvider extends ChangeNotifier {
         dayOfWeek: 3,
         room: 'NVH 707',
         slotTime: '9:30 - 11:45',
+        sessionNumber: 5,
         instructor: 'ThanhNV',
         campus: 'FUHCM',
         isOnline: true,
@@ -1569,6 +1692,7 @@ class AttendanceProvider extends ChangeNotifier {
         dayOfWeek: 4,
         room: 'NVH 602',
         slotTime: '9:30 - 11:45',
+        sessionNumber: 4,
         instructor: 'PhuongLHK',
         campus: 'FUHCM',
       ),

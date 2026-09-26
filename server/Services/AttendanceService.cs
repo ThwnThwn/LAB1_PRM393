@@ -152,6 +152,8 @@ public sealed class AttendanceService(
 
         var now = DateTime.UtcNow;
         var sessionDate = ParseDate(request.Date, now);
+        var sessionNumber = Math.Max(1, request.SessionNumber);
+        var totalSessions = Math.Max(sessionNumber, request.TotalSessions <= 0 ? 20 : request.TotalSessions);
         var date = DateOnly.ParseExact(sessionDate, "yyyy-MM-dd", CultureInfo.InvariantCulture);
         var gate = GetSessionLock($"open:{classCode}:{subjectCode}:{request.Slot}:{sessionDate}");
         await gate.WaitAsync(cancellationToken);
@@ -184,15 +186,34 @@ public sealed class AttendanceService(
             {
                 if (existing.Snapshot.IsOpen)
                 {
+                    var activeSnapshot = RebuildSnapshot(existing.Snapshot with
+                    {
+                        SessionNumber = sessionNumber,
+                        TotalSessions = totalSessions,
+                    }, existing.DeviceBindings);
+                    if (activeSnapshot.SessionNumber != existing.Snapshot.SessionNumber ||
+                        activeSnapshot.TotalSessions != existing.Snapshot.TotalSessions)
+                    {
+                        var metadataSave = await sheetsStore.SaveSessionAsync(
+                            new StoredAttendanceSession(activeSnapshot, existing.AuditLogs, existing.DeviceBindings),
+                            cancellationToken);
+                        if (!metadataSave.Success)
+                        {
+                            return StoreFailure<AttendanceSnapshot>(metadataSave.Message);
+                        }
+                        await BroadcastAsync(activeSnapshot.SessionId, "SessionUpdated", activeSnapshot, cancellationToken);
+                    }
                     return new ServiceResult<AttendanceSnapshot>(
                         true,
                         "Phiên điểm danh này đang mở.",
-                        ApplyOtpState(existing.Snapshot));
+                        ApplyOtpState(activeSnapshot));
                 }
 
                 var reopenedSnapshot = RebuildSnapshot(
                     existing.Snapshot with
                     {
+                        SessionNumber = sessionNumber,
+                        TotalSessions = totalSessions,
                         IsOpen = true,
                         OpenedAt = now,
                         ClosedAt = null,
@@ -278,7 +299,9 @@ public sealed class AttendanceService(
                 records.Length,
                 new DashboardStats(0, 0, 0, 0),
                 records,
-                []), []);
+                [],
+                sessionNumber,
+                totalSessions), []);
             var audits = new[]
             {
                 CreateAudit(
@@ -733,15 +756,26 @@ public sealed class AttendanceService(
                     sessionId, student.RollNo, student.FullName, student.Email,
                     classCode, subjectCode, request.Slot, AttendanceStatuses.Absent,
                     null, string.Empty, string.Empty)).ToArray();
+                var sessionNumber = Math.Max(1, request.SessionNumber);
+                var totalSessions = Math.Max(sessionNumber, request.TotalSessions <= 0 ? 20 : request.TotalSessions);
                 var initial = RebuildSnapshot(new AttendanceSnapshot(
                     "success", sessionId, classCode, subjectCode, request.Slot,
                     date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     false, now, now, 10, false, null, null,
-                    records.Length, new DashboardStats(0, 0, 0, 0), records, []), []);
+                    records.Length, new DashboardStats(0, 0, 0, 0), records, [],
+                    sessionNumber, totalSessions), []);
                 stored = new StoredAttendanceSession(initial, [], []);
             }
 
-            var current = stored.Snapshot;
+            var requestedMeetingNumber = Math.Max(1, request.SessionNumber);
+            var requestedTotalSessions = Math.Max(
+                requestedMeetingNumber,
+                request.TotalSessions <= 0 ? 20 : request.TotalSessions);
+            var current = stored.Snapshot with
+            {
+                SessionNumber = requestedMeetingNumber,
+                TotalSessions = requestedTotalSessions,
+            };
             if (!current.ClassCode.Equals(classCode, StringComparison.OrdinalIgnoreCase) ||
                 !current.SubjectCode.Equals(subjectCode, StringComparison.OrdinalIgnoreCase) ||
                 current.Slot != request.Slot || !SameVietnamCalendarDate(current.Date, date))

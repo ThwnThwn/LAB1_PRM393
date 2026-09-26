@@ -43,7 +43,9 @@ public sealed record OpenSessionRequest(
     string? Date,
     int LateAfterMinutes,
     string? Actor,
-    IReadOnlyCollection<StudentSeed>? Students);
+    IReadOnlyCollection<StudentSeed>? Students,
+    int SessionNumber = 1,
+    int TotalSessions = 20);
 
 public sealed record StudentCheckinRequest(
     string? SessionId,
@@ -73,7 +75,9 @@ public sealed record SaveAttendanceBatchRequest(
     int Slot,
     string? Date,
     string? Actor,
-    IReadOnlyCollection<AttendanceBatchChange>? Changes);
+    IReadOnlyCollection<AttendanceBatchChange>? Changes,
+    int SessionNumber = 1,
+    int TotalSessions = 20);
 
 public sealed record ReleaseDeviceRequest(string? Actor, string? Reason);
 
@@ -131,7 +135,9 @@ public sealed record AttendanceSnapshot(
     int Count,
     DashboardStats Stats,
     IReadOnlyCollection<AttendanceRecord> Students,
-    IReadOnlyCollection<DeviceBindingRecord> DeviceBindings);
+    IReadOnlyCollection<DeviceBindingRecord> DeviceBindings,
+    int SessionNumber = 0,
+    int TotalSessions = 20);
 
 public sealed record AuditLogRecord(
     long Id,

@@ -148,7 +148,7 @@ test("class and subject filters narrow sessions and select the latest match", as
   assert.doesNotMatch(context.window.location.href, /sessionId=/);
 });
 
-test("one-subject class skips session selection and follows its latest date", async () => {
+test("one-subject class follows its latest meeting and exposes the meeting selector", async () => {
   const context = createAppContext();
   context.sessions = [
     { sessionId: "old", classCode: "SE1801", subjectCode: "PRM393", slot: 2, date: "2026-09-21" },
@@ -164,8 +164,111 @@ test("one-subject class skips session selection and follows its latest date", as
   assert.equal(context.document.querySelector("#subject-filter").value, "PRM393");
   assert.equal(vm.runInContext("state.selectedSessionId", context), "new");
   assert.deepEqual(context.refreshed, ["new"]);
-  assert.match(context.document.querySelector("#session-picker-help").textContent, /chỉ có một môn học/);
-  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, "..", "fap-demo", "index.html"), "utf8"), /id="session-picker"/);
+  assert.match(context.document.querySelector("#session-picker-help").textContent, /buổi học mới nhất/);
+  assert.equal(context.document.querySelector("#meeting-filter").value, "new");
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "fap-demo", "index.html"), "utf8"), /id="meeting-filter"/);
+});
+
+test("meeting selector pins an explicit course meeting instead of guessing from slot", async () => {
+  const context = createAppContext();
+  context.sessions = [
+    { sessionId: "meeting-7", classCode: "SE1917", subjectCode: "PRN232", slot: 1, date: "2026-09-24", sessionNumber: 7, totalSessions: 20, isOpen: false },
+    { sessionId: "meeting-8", classCode: "SE1917", subjectCode: "PRN232", slot: 1, date: "2026-09-28", sessionNumber: 8, totalSessions: 20, isOpen: true },
+  ];
+  context.refreshed = [];
+  vm.runInContext(`
+    state.sessions = sessions;
+    state.sessionsLoading = false;
+    state.classFilter = "SE1917";
+    state.subjectFilter = "PRN232";
+    state.selectedSessionId = "meeting-8";
+    refreshData = async () => refreshed.push(state.selectedSessionId);
+    renderSessionPicker();
+  `, context);
+
+  const meetingFilter = context.document.querySelector("#meeting-filter");
+  assert.match(meetingFilter.innerHTML, /Buổi 7\/20/);
+  assert.match(meetingFilter.innerHTML, /Buổi 8\/20/);
+  meetingFilter.value = "meeting-7";
+  await meetingFilter.listeners.get("change")();
+
+  assert.equal(vm.runInContext("state.selectedSessionId", context), "meeting-7");
+  assert.equal(vm.runInContext("state.followLatest", context), false);
+  assert.deepEqual(context.refreshed, ["meeting-7"]);
+});
+
+test("meeting selector lists all 20 planned meetings for a selected course", async () => {
+  const context = createAppContext();
+  context.sessions = [
+    { sessionId: "meeting-1", classCode: "SE1801", subjectCode: "PRM393", slot: 2, date: "2026-09-21", sessionNumber: 1, totalSessions: 20, isOpen: true },
+  ];
+  vm.runInContext(`
+    state.sessions = hydrateMeetingNumbers(sessions);
+    state.sessionsLoading = false;
+    state.classFilter = "SE1801";
+    state.subjectFilter = "PRM393";
+    state.selectedSessionId = "meeting-1";
+    state.selectedMeetingNumber = 1;
+    renderSessionPicker();
+  `, context);
+
+  const meetingFilter = context.document.querySelector("#meeting-filter");
+  assert.match(meetingFilter.innerHTML, /Buổi 1\/20 · 21\/09\/2026/);
+  assert.match(meetingFilter.innerHTML, /Buổi 2\/20 · Chưa có phiên/);
+  assert.match(meetingFilter.innerHTML, /Buổi 20\/20 · Chưa có phiên/);
+  assert.equal((meetingFilter.innerHTML.match(/<option /g) || []).length, 20);
+
+  meetingFilter.value = "planned:20";
+  await meetingFilter.listeners.get("change")();
+  assert.equal(vm.runInContext("state.selectedMeetingNumber", context), 20);
+  assert.equal(vm.runInContext("state.selectedSessionId", context), "");
+  assert.equal(context.document.querySelector("#meeting-number").textContent, "Buổi 20/20");
+  assert.equal(context.document.querySelector("#session-status").textContent, "Chưa có phiên");
+  assert.match(context.document.querySelector("#student-rows").innerHTML, /Buổi 20\/20 chưa có phiên/);
+});
+
+test("legacy sessions are numbered chronologically from 1 to 20", () => {
+  const context = createAppContext();
+  context.sessions = [
+    { sessionId: "third", classCode: "SE1917", subjectCode: "PRN232", date: "2026-09-28", sessionNumber: 0 },
+    { sessionId: "first", classCode: "SE1917", subjectCode: "PRN232", date: "2026-09-21" },
+    { sessionId: "second", classCode: "SE1917", subjectCode: "PRN232", date: "2026-09-24", sessionNumber: null },
+  ];
+  const numbered = JSON.parse(vm.runInContext(`JSON.stringify(
+    hydrateMeetingNumbers(sessions).map(({ sessionId, sessionNumber, totalSessions }) =>
+      ({ sessionId, sessionNumber, totalSessions })))`, context));
+
+  assert.deepEqual(numbered, [
+    { sessionId: "third", sessionNumber: 3, totalSessions: 20 },
+    { sessionId: "first", sessionNumber: 1, totalSessions: 20 },
+    { sessionId: "second", sessionNumber: 2, totalSessions: 20 },
+  ]);
+});
+
+test("official meeting numbers are preserved while legacy gaps use unused numbers", () => {
+  const context = createAppContext();
+  context.sessions = [
+    { sessionId: "one", classCode: "SE1917", subjectCode: "PRN232", date: "2026-09-21" },
+    { sessionId: "two", classCode: "SE1917", subjectCode: "PRN232", date: "2026-09-24", sessionNumber: 7, totalSessions: 20 },
+  ];
+  vm.runInContext("state.sessions = hydrateMeetingNumbers(sessions)", context);
+  assert.equal(vm.runInContext('state.sessions.find((item) => item.sessionId === "one").sessionNumber', context), 1);
+  assert.equal(vm.runInContext('state.sessions.find((item) => item.sessionId === "two").sessionNumber', context), 7);
+
+  context.incoming = { sessionId: "one", classCode: "SE1917", subjectCode: "PRN232", sessionNumber: 0 };
+  vm.runInContext("upsertSessionSummary(incoming)", context);
+  assert.equal(vm.runInContext('state.sessions.find((item) => item.sessionId === "one").sessionNumber', context), 1);
+});
+
+test("missing meeting metadata renders a numeric 1 of 20 fallback", () => {
+  const context = createAppContext();
+  context.snapshot = {
+    sessionId: "legacy", classCode: "SE1917", subjectCode: "PRN232",
+    date: "2026-09-21", slot: 1, students: [],
+  };
+  vm.runInContext("state.snapshot = snapshot; renderSession()", context);
+  assert.equal(context.document.querySelector("#meeting-number").textContent, "Buổi 1/20");
+  assert.match(context.document.querySelector("#session-description").textContent, /Buổi 1\/20/);
 });
 
 test("session polling follows a newer matching date without losing unsaved drafts", async () => {
@@ -270,6 +373,7 @@ test("unsaved attendance locks both filters", () => {
   `, context);
   assert.equal(context.document.querySelector("#class-filter").disabled, true);
   assert.equal(context.document.querySelector("#subject-filter").disabled, true);
+  assert.equal(context.document.querySelector("#meeting-filter").disabled, true);
 });
 
 test("a stale attendance read cannot replace a newly filtered session", async () => {
