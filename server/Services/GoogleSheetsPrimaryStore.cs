@@ -15,7 +15,10 @@ public sealed record GoogleSheetsStoreStatus(
     string DatabaseMode,
     string Message);
 
-public sealed record GoogleSheetsWriteResult(bool Success, string Message);
+public sealed record GoogleSheetsWriteResult(
+    bool Success,
+    string Message,
+    JsonElement? Payload = null);
 
 public sealed record StoredDeviceBinding(
     long Id,
@@ -38,7 +41,7 @@ public sealed record StoredAttendanceSession(
 public sealed class GoogleSheetsPrimaryStore
 {
     private const string LegacyScriptMessage =
-        "Apps Script đang là bản cũ (cần phiên bản 6). Mở desktop app → Cấu hình Google Sheets, " +
+        "Apps Script đang là bản cũ (cần phiên bản 7). Mở desktop app → Cấu hình Google Sheets, " +
         "sao chép lại mã Apps Script rồi chọn Deploy → Manage deployments → Edit → New version → Deploy.";
 
     private sealed record DemoClassDefinition(string ClassCode, string SubjectCode);
@@ -65,12 +68,14 @@ public sealed class GoogleSheetsPrimaryStore
 
     private static readonly DemoScheduleDefinition[] DemoSchedule =
     [
+        new("DEMO-20260914-SE1918-PRM393-S2", "SE1918", "PRM393", 2, new DateTime(2026, 9, 14), 9, 30, true, 1),
+        new("DEMO-20260917-SE1918-PRM393-S2", "SE1918", "PRM393", 2, new DateTime(2026, 9, 17), 9, 30, true, 2),
         new("DEMO-SE1917-PRN232", "SE1917", "PRN232", 1, new DateTime(2026, 9, 21), 7, 0, true, 3),
         new("DEMO-SE1918-PRM393", "SE1918", "PRM393", 2, new DateTime(2026, 9, 21), 9, 30, true, 3),
         new("DEMO-SE1920-HCM202", "SE1920", "HCM202", 1, new DateTime(2026, 9, 22), 7, 0, true, 5),
         new("DEMO-SE1919-EXE201", "SE1919", "EXE201", 2, new DateTime(2026, 9, 23), 9, 30, false, 5),
         new("DEMO-20260924-SE1917-PRN232-S1", "SE1917", "PRN232", 1, new DateTime(2026, 9, 24), 7, 0, false, 4),
-        new("DEMO-20260924-SE1918-PRM393-S2", "SE1918", "PRM393", 2, new DateTime(2026, 9, 24), 9, 30, false, 4),
+        new("DEMO-20260924-SE1918-PRM393-S2", "SE1918", "PRM393", 2, new DateTime(2026, 9, 24), 9, 30, true, 4),
         // Keep the existing opaque ID so previously shared FAP links continue to resolve.
         new("DEMO-20260924-SE1920-HCM202-S4", "SE1920", "HCM202", 1, new DateTime(2026, 9, 25), 7, 0, false, 6),
     ];
@@ -341,6 +346,32 @@ public sealed class GoogleSheetsPrimaryStore
             students,
         }, cancellationToken);
 
+    public Task<GoogleSheetsWriteResult> SyncCourseMeetingsAsync(
+        IReadOnlyCollection<CourseMeetingPlanItem> meetings,
+        CancellationToken cancellationToken) =>
+        PostAsync(new
+        {
+            action = "syncCourseMeetings",
+            updatedAt = DateTime.UtcNow,
+            meetings = meetings.Select(item => new
+            {
+                classCode = item.ClassCode?.Trim().ToUpperInvariant() ?? string.Empty,
+                subjectCode = item.SubjectCode?.Trim().ToUpperInvariant() ?? string.Empty,
+                meetingNumber = item.MeetingNumber,
+                totalMeetings = item.TotalMeetings,
+                date = item.Date?.Trim() ?? string.Empty,
+                slot = item.Slot,
+            }),
+        }, cancellationToken);
+
+    public Task<GoogleSheetsWriteResult> NormalizeDuplicateSessionsAsync(
+        CancellationToken cancellationToken) =>
+        PostAsync(new
+        {
+            action = "normalizeDuplicateSessions",
+            requestedAt = DateTime.UtcNow,
+        }, cancellationToken);
+
     public Task<GoogleSheetsWriteResult> SaveSessionAsync(
         StoredAttendanceSession storedSession,
         CancellationToken cancellationToken) =>
@@ -405,7 +436,19 @@ public sealed class GoogleSheetsPrimaryStore
             DateTime? closedAt = schedule.Completed ? openedAt.AddMinutes(135) : null;
             var students = roster.Select((student, index) =>
             {
-                var status = schedule.Completed && index is not 6 and not 18
+                var isAttendanceRiskDemo =
+                    schedule.ClassCode == "SE1918" &&
+                    schedule.SubjectCode == "PRM393" &&
+                    schedule.SessionNumber <= 4 &&
+                    index == 0;
+                var isSingleSessionDemoAbsence =
+                    schedule.ClassCode == "SE1918"
+                        ? (schedule.SessionNumber == 3 && index == 6) ||
+                          (schedule.SessionNumber == 4 && index == 18)
+                        : index is 6 or 18;
+                var status = schedule.Completed &&
+                             !isAttendanceRiskDemo &&
+                             !isSingleSessionDemoAbsence
                     ? AttendanceStatuses.Present
                     : AttendanceStatuses.Absent;
 
@@ -473,7 +516,7 @@ public sealed class GoogleSheetsPrimaryStore
 
         return new GoogleSheetsWriteResult(
             true,
-            "Đã seed lịch tuần 21/09–27/09/2026 và roster chung 35 sinh viên vào Google Sheets.");
+            "Đã seed 7 ca trong tuần, 2 phiên lịch sử và một sinh viên vắng 4/20 buổi vào Google Sheets.");
     }
 
     private async Task<GoogleSheetsWriteResult> PostAsync(
@@ -497,7 +540,10 @@ public sealed class GoogleSheetsPrimaryStore
                 return FailureMessage(body, response);
             }
 
-            return new GoogleSheetsWriteResult(true, "Đã ghi dữ liệu vào Google Sheets.");
+            var message = body.TryGetProperty("message", out var messageElement)
+                ? messageElement.ToString()
+                : "Đã ghi dữ liệu vào Google Sheets.";
+            return new GoogleSheetsWriteResult(true, message, body);
         }
         catch (Exception exception)
         {
@@ -523,7 +569,7 @@ public sealed class GoogleSheetsPrimaryStore
                 return FailureMessage(payload, response);
             }
 
-            if (ReadInt(payload, "version") < 6)
+            if (ReadInt(payload, "version") < 7)
             {
                 return new GoogleSheetsWriteResult(
                     false,

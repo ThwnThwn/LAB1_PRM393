@@ -9,7 +9,7 @@ class AttendanceSessionMatcher {
     required DateTime date,
   }) {
     final matches = sessions.where((session) {
-      final sessionDate = _calendarDate(session['date']);
+      final sessionDate = calendarDate(session['date']);
       final students = session['students'];
       return session['sessionId']?.toString().isNotEmpty == true &&
           session['classCode']?.toString().toUpperCase() ==
@@ -30,7 +30,7 @@ class AttendanceSessionMatcher {
     return matches.firstOrNull;
   }
 
-  static DateTime? _calendarDate(Object? rawDate) {
+  static DateTime? calendarDate(Object? rawDate) {
     final value = rawDate?.toString() ?? '';
     if (value.isEmpty) return null;
     final parsed = DateTime.tryParse(value);

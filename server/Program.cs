@@ -285,6 +285,65 @@ app.MapPost("/api/timetable/import-image", async (
     }
 }).DisableAntiforgery();
 
+app.MapPost("/api/course-meetings", async (
+    SyncCourseMeetingsRequest request,
+    GoogleSheetsPrimaryStore sheetsStore,
+    CancellationToken cancellationToken) =>
+{
+    var meetings = (request.Meetings ?? [])
+        .Where(item =>
+            !string.IsNullOrWhiteSpace(item.ClassCode) &&
+            !string.IsNullOrWhiteSpace(item.SubjectCode) &&
+            item.MeetingNumber > 0 &&
+            item.TotalMeetings >= item.MeetingNumber &&
+            item.Slot is >= 1 and <= 8 &&
+            DateOnly.TryParseExact(
+                item.Date,
+                "yyyy-MM-dd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None,
+                out _))
+        .ToArray();
+    if (meetings.Length == 0 || meetings.Length != (request.Meetings?.Count ?? 0))
+    {
+        return Results.BadRequest(new
+        {
+            success = false,
+            message = "Kế hoạch buổi học không hợp lệ.",
+        });
+    }
+
+    var result = await sheetsStore.SyncCourseMeetingsAsync(meetings, cancellationToken);
+    return Results.Json(new
+    {
+        success = result.Success,
+        message = result.Success
+            ? $"Đã đồng bộ {meetings.Length} buổi học lên Google Sheets."
+            : result.Message,
+        meetingCount = meetings.Length,
+        courseCount = meetings
+            .Select(item => $"{item.ClassCode?.Trim().ToUpperInvariant()}|{item.SubjectCode?.Trim().ToUpperInvariant()}")
+            .Distinct(StringComparer.Ordinal)
+            .Count(),
+    }, statusCode: result.Success
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status502BadGateway);
+});
+
+app.MapPost("/api/google-sheets/normalize-sessions", async (
+    GoogleSheetsPrimaryStore sheetsStore,
+    CancellationToken cancellationToken) =>
+{
+    var result = await sheetsStore.NormalizeDuplicateSessionsAsync(cancellationToken);
+    return result.Success && result.Payload is JsonElement payload
+        ? Results.Json(payload)
+        : Results.Json(new
+        {
+            success = false,
+            message = result.Message,
+        }, statusCode: StatusCodes.Status502BadGateway);
+});
+
 app.MapPost("/api/sessions", async (
     OpenSessionRequest request,
     AttendanceService service,
@@ -589,11 +648,11 @@ app.MapPost("/api/google-sheets/seed-demo", async (
         ? Results.Ok(new
         {
             success = true,
-            message = "Đã seed lịch tuần 21/09–27/09/2026, 4 lớp dùng chung roster 35 sinh viên và 7 ca học vào Google Sheets.",
+            message = "Đã seed 7 ca trong tuần 21/09–27/09/2026, 2 phiên lịch sử và sinh viên SE191701 lớp SE1918 vắng 4/20 buổi PRM393.",
             classCount = 4,
             studentCount = 35,
             rosterRowCount = 140,
-            sessionCount = 7,
+            sessionCount = 9,
         })
         : GoogleSheetsWriteFailedResult(seeded.Message);
 });

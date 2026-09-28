@@ -40,8 +40,9 @@ class _SheetsConfigWidgetState extends State<SheetsConfigWidget> {
         title: const Text('Tạo dữ liệu demo?'),
         content: const Text(
           'Ứng dụng sẽ tạo một roster chung gồm 35 sinh viên cho 4 lớp '
-          '(SE1917–SE1920), 7 ca học theo lịch tuần 21/09–27/09/2026 và '
-          '245 bản ghi điểm danh. Các dòng demo cũ và roster của 4 lớp này '
+          '(SE1917–SE1920), 7 ca học theo lịch tuần 21/09–27/09/2026, '
+          '2 phiên lịch sử và một sinh viên vắng 4/20 buổi để thử cảnh báo. '
+          'Tổng cộng 315 bản ghi điểm danh. Các dòng demo cũ và roster của 4 lớp này '
           'sẽ được thay thế; dữ liệu khác trong Sheet vẫn được giữ nguyên.',
         ),
         actions: [

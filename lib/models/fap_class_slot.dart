@@ -146,6 +146,7 @@ class TimetableOcrCandidate {
   final int? dayOfWeek;
   final int? slot;
   final String room;
+  final String instructor;
   final double confidence;
   final List<String> warnings;
 
@@ -156,25 +157,167 @@ class TimetableOcrCandidate {
     required this.dayOfWeek,
     required this.slot,
     required this.room,
+    required this.instructor,
     required this.confidence,
     required this.warnings,
   });
 
   factory TimetableOcrCandidate.fromJson(Map<String, dynamic> json) {
-    final warnings = json['warnings'];
+    final rawSubjectCode = json['subjectCode']?.toString() ?? '';
+    final rawClassCode = json['classCode']?.toString() ?? '';
+    final rawSubjectName = json['subjectName']?.toString() ?? '';
+    final rawInstructor = json['instructor']?.toString() ?? '';
+    final subjectCode = _normalizeOcrSubjectCode(rawSubjectCode);
+    final classCode = _normalizeOcrClassCode(rawClassCode);
+    final instructor = _normalizeOcrInstructor(
+      rawInstructor.isEmpty ? rawSubjectName : rawInstructor,
+    );
+    final apiWarnings = json['warnings'];
+    final warnings = apiWarnings is List
+        ? apiWarnings.map((warning) => warning.toString()).toList()
+        : <String>[];
+    final apiSlot = (json['slot'] as num?)?.toInt();
+    final inferredSlot = apiSlot ?? _inferSlotFromOcrText(rawSubjectName);
+
+    if (subjectCode != rawSubjectCode.trim().toUpperCase()) {
+      _addUniqueOcrWarning(
+        warnings,
+        'Đã tự sửa mã môn ${rawSubjectCode.trim()} → $subjectCode',
+      );
+    }
+    if (classCode != rawClassCode.trim().toUpperCase()) {
+      _addUniqueOcrWarning(
+        warnings,
+        'Đã tự sửa mã lớp ${rawClassCode.trim()} → $classCode',
+      );
+    }
+    if (apiSlot == null && inferredSlot != null) {
+      warnings.removeWhere(
+        (warning) => warning.toLowerCase().contains('chưa xác định được slot'),
+      );
+      _addUniqueOcrWarning(
+        warnings,
+        'Đã tự điền Slot $inferredSlot từ giờ học',
+      );
+    }
+    if (rawInstructor.trim().isEmpty && instructor.isNotEmpty) {
+      _addUniqueOcrWarning(
+        warnings,
+        'Đã tách giảng viên $instructor khỏi tên môn',
+      );
+    }
+
     return TimetableOcrCandidate(
-      subjectCode: json['subjectCode']?.toString() ?? '',
-      subjectName: json['subjectName']?.toString() ?? '',
-      classCode: json['classCode']?.toString() ?? '',
+      subjectCode: subjectCode,
+      subjectName: _normalizeOcrSubjectName(
+        rawSubjectName,
+        subjectCode,
+        instructor,
+      ),
+      classCode: classCode,
       dayOfWeek: (json['dayOfWeek'] as num?)?.toInt(),
-      slot: (json['slot'] as num?)?.toInt(),
+      slot: inferredSlot,
       room: json['room']?.toString() ?? '',
+      instructor: instructor,
       confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
-      warnings: warnings is List
-          ? warnings.map((warning) => warning.toString()).toList()
-          : const [],
+      warnings: warnings,
     );
   }
+}
+
+final RegExp _ocrSubjectCodePattern = RegExp(
+  r'^([A-Z]{2,5})[-\s]*([0-9ILOSBZG]{3})([A-Z]?)$',
+);
+final RegExp _ocrClassCodePattern = RegExp(
+  r'^([A-Z]{2})[-\s]*([0-9ILOSBZG]{4,6})$',
+);
+final RegExp _ocrTimePattern = RegExp(
+  r'(?<!\d)(0?7|0?9|12|15|17|19|20)\s*[:.hH]\s*(00|30|45)(?!\d)',
+);
+final RegExp _ocrInstructorPattern = RegExp(
+  r'(?<![A-Za-z])([A-Z][a-z]{2,}[A-Z]{2,5})(?![A-Za-z])',
+);
+
+String _normalizeOcrSubjectCode(String value) {
+  final compact = value.trim().toUpperCase();
+  final match = _ocrSubjectCodePattern.firstMatch(compact);
+  if (match == null) return compact;
+
+  var prefix = match.group(1)!;
+  if (prefix.length == 5 && prefix.startsWith('TI')) {
+    // The blue book icon next to a course is sometimes read as "TI".
+    prefix = prefix.substring(2);
+  } else if (prefix.length == 4 &&
+      (prefix.startsWith('I') || prefix.startsWith('L'))) {
+    prefix = prefix.substring(1);
+  }
+  return '$prefix${_normalizeOcrDigits(match.group(2)!)}${match.group(3)!}';
+}
+
+String _normalizeOcrClassCode(String value) {
+  final compact = value.trim().toUpperCase();
+  final match = _ocrClassCodePattern.firstMatch(compact);
+  if (match == null) return compact;
+  return '${match.group(1)!}${_normalizeOcrDigits(match.group(2)!)}';
+}
+
+String _normalizeOcrDigits(String value) => value
+    .replaceAll(RegExp('[IL]'), '1')
+    .replaceAll('O', '0')
+    .replaceAll('S', '5')
+    .replaceAll('B', '8')
+    .replaceAll('Z', '2')
+    .replaceAll('G', '6');
+
+int? _inferSlotFromOcrText(String value) {
+  final match = _ocrTimePattern.firstMatch(value);
+  if (match == null) return null;
+  final time = '${int.parse(match.group(1)!)}:${match.group(2)!}';
+  return const {
+    '7:00': 1,
+    '9:30': 2,
+    '12:30': 3,
+    '15:00': 4,
+    '17:30': 5,
+    '20:00': 6,
+    '17:45': 7,
+    '19:30': 8,
+  }[time];
+}
+
+String _normalizeOcrInstructor(String value) =>
+    _ocrInstructorPattern.firstMatch(value)?.group(1) ?? '';
+
+String _normalizeOcrSubjectName(
+  String value,
+  String subjectCode,
+  String instructor,
+) {
+  final containsScheduleNoise = _ocrTimePattern.hasMatch(value);
+  final containsInstructor =
+      instructor.isNotEmpty && value.contains(instructor);
+  if (!containsScheduleNoise && !containsInstructor) return value.trim();
+
+  var withoutScheduleNoise = value
+      .replaceAll(
+        RegExp(r'\d{1,2}\s*[:.hH]\s*\d{2}\s*[-–—]\s*\d{1,2}\s*[:.hH]\s*\d{2}'),
+        ' ',
+      )
+      .replaceAll(
+        RegExp(r'\b(?:online|offline|trực\s*tuyến)\b', caseSensitive: false),
+        ' ',
+      );
+  if (instructor.isNotEmpty) {
+    withoutScheduleNoise = withoutScheduleNoise.replaceAll(instructor, ' ');
+  }
+  withoutScheduleNoise = withoutScheduleNoise
+      .replaceAll(RegExp(r'[^A-Za-zÀ-ỹ]+'), ' ')
+      .trim();
+  return withoutScheduleNoise.length >= 4 ? withoutScheduleNoise : subjectCode;
+}
+
+void _addUniqueOcrWarning(List<String> warnings, String message) {
+  if (!warnings.contains(message)) warnings.add(message);
 }
 
 class TimetableOcrResult {

@@ -47,6 +47,17 @@ public sealed record OpenSessionRequest(
     int SessionNumber = 1,
     int TotalSessions = 20);
 
+public sealed record CourseMeetingPlanItem(
+    string? ClassCode,
+    string? SubjectCode,
+    int MeetingNumber,
+    int TotalMeetings,
+    string? Date,
+    int Slot);
+
+public sealed record SyncCourseMeetingsRequest(
+    IReadOnlyCollection<CourseMeetingPlanItem>? Meetings);
+
 public sealed record StudentCheckinRequest(
     string? SessionId,
     string? Email,

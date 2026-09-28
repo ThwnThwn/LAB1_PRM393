@@ -492,6 +492,311 @@ function upsertCourseMeeting(session, updatedAt) {
   }, rows);
 }
 
+function normalizeMeetingDate(value) {
+  if (value instanceof Date) {
+    return Utilities.formatDate(value, "Asia/Ho_Chi_Minh", "yyyy-MM-dd");
+  }
+  var text = String(value || "").trim();
+  if (/^\\d{4}-\\d{2}-\\d{2}\$/.test(text)) return text;
+  var parsed = new Date(text);
+  if (!isNaN(parsed.getTime())) {
+    return Utilities.formatDate(parsed, "Asia/Ho_Chi_Minh", "yyyy-MM-dd");
+  }
+  var match = text.match(/^(\\d{4}-\\d{2}-\\d{2})/);
+  return match ? match[1] : text;
+}
+
+function sessionMeetingKey(item) {
+  return [
+    String(item.ClassCode || item.classCode || "").trim().toUpperCase(),
+    String(item.SubjectCode || item.subjectCode || "").trim().toUpperCase(),
+    normalizeMeetingDate(item.SessionDate || item.date || ""),
+    Number(item.Slot || item.slot || 0)
+  ].join("|");
+}
+
+function objectRow(name, item) {
+  return SCHEMA[name].map(function(header) {
+    return item[header] === undefined || item[header] === null ? "" : item[header];
+  });
+}
+
+function syncCourseMeetingPlan(meetings, updatedAt) {
+  var grouped = {};
+  for (var i = 0; i < meetings.length; i++) {
+    var input = meetings[i] || {};
+    var classCode = String(input.classCode || "").trim().toUpperCase();
+    var subjectCode = String(input.subjectCode || "").trim().toUpperCase();
+    var meetingNumber = Number(input.meetingNumber || 0);
+    var totalMeetings = Number(input.totalMeetings || 0);
+    var slot = Number(input.slot || 0);
+    var date = normalizeMeetingDate(input.date || "");
+    if (!classCode || !subjectCode || meetingNumber < 1 ||
+        totalMeetings < meetingNumber || slot < 1 || slot > 8 || !date) {
+      throw new Error("Invalid course meeting plan");
+    }
+    var courseKey = classCode + "|" + subjectCode;
+    if (!grouped[courseKey]) grouped[courseKey] = [];
+    grouped[courseKey].push({
+      classCode: classCode,
+      subjectCode: subjectCode,
+      meetingNumber: meetingNumber,
+      totalMeetings: totalMeetings,
+      date: date,
+      slot: slot
+    });
+  }
+
+  var existingMeetings = readObjects("CourseMeetings");
+  var existingById = {};
+  existingMeetings.forEach(function(item) {
+    existingById[String(item.MeetingId || "")] = item;
+  });
+  var sessionsByKey = {};
+  readObjects("Sessions").forEach(function(item) {
+    var key = sessionMeetingKey(item);
+    var current = sessionsByKey[key];
+    var currentTime = current ? new Date(current.UpdatedAt || current.OpenedAt || 0).getTime() : 0;
+    var itemTime = new Date(item.UpdatedAt || item.OpenedAt || 0).getTime();
+    if (!current || itemTime >= currentTime) sessionsByKey[key] = item;
+  });
+
+  var count = 0;
+  var courseCount = 0;
+  Object.keys(grouped).forEach(function(courseKey) {
+    var plan = grouped[courseKey];
+    plan.sort(function(left, right) {
+      return left.meetingNumber - right.meetingNumber;
+    });
+    var parts = courseKey.split("|");
+    var rows = [];
+    for (var p = 0; p < plan.length; p++) {
+      var meeting = plan[p];
+      var meetingId = [meeting.classCode, meeting.subjectCode, meeting.meetingNumber].join("|");
+      var previous = existingById[meetingId] || {};
+      var linkedSession = sessionsByKey[
+        [meeting.classCode, meeting.subjectCode, meeting.date, meeting.slot].join("|")
+      ];
+      var sessionId = previous.SessionId || (linkedSession ? linkedSession.SessionId : "");
+      var status = previous.Status || "PLANNED";
+      if (linkedSession) {
+        status = boolValue(linkedSession.IsOpen)
+          ? "OPEN"
+          : (linkedSession.ClosedAt ? "CLOSED" : "PLANNED");
+      }
+      rows.push([
+        meetingId,
+        meeting.classCode,
+        meeting.subjectCode,
+        meeting.meetingNumber,
+        meeting.totalMeetings,
+        meeting.date,
+        meeting.slot,
+        sessionId,
+        status,
+        updatedAt
+      ]);
+      count++;
+    }
+    replaceRows("CourseMeetings", function(item) {
+      return String(item.ClassCode).toUpperCase() === parts[0] &&
+        String(item.SubjectCode).toUpperCase() === parts[1];
+    }, rows);
+    courseCount++;
+  });
+  return {count: count, courseCount: courseCount};
+}
+
+function createAttendanceBackup() {
+  var source = SpreadsheetApp.getActiveSpreadsheet();
+  var stamp = Utilities.formatDate(new Date(), "Asia/Ho_Chi_Minh", "yyyyMMdd-HHmmss");
+  var backup = SpreadsheetApp.create(source.getName() + " backup " + stamp);
+  var names = ["Sessions", "CourseMeetings", "Attendance", "DeviceBindings", "AuditLog"];
+  for (var i = 0; i < names.length; i++) {
+    getSheet(names[i], false).copyTo(backup).setName(names[i]);
+  }
+  var sheets = backup.getSheets();
+  for (var s = sheets.length - 1; s >= 0; s--) {
+    if (names.indexOf(sheets[s].getName()) < 0 && backup.getSheets().length > 1) {
+      backup.deleteSheet(sheets[s]);
+    }
+  }
+  return backup.getUrl();
+}
+
+function normalizeDuplicateSessions(updatedAt) {
+  var sessions = readObjects("Sessions");
+  var attendance = readObjects("Attendance");
+  var bindings = readObjects("DeviceBindings");
+  var audit = readObjects("AuditLog");
+  var meetings = readObjects("CourseMeetings");
+  var groups = {};
+  sessions.forEach(function(item) {
+    var key = sessionMeetingKey(item);
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  });
+  var duplicateKeys = Object.keys(groups).filter(function(key) {
+    return key && groups[key].length > 1;
+  });
+  var openSessionCount = sessions.filter(function(item) {
+    return boolValue(item.IsOpen);
+  }).length;
+  if (!duplicateKeys.length && !openSessionCount) {
+    return {
+      duplicateGroups: 0,
+      removedSessions: 0,
+      closedSessions: 0,
+      backupUrl: "",
+      sessionCount: sessions.length
+    };
+  }
+
+  var backupUrl = createAttendanceBackup();
+  var replacementById = {};
+  var mergedSessions = [];
+  var mergedAttendance = [];
+  var mergedBindings = [];
+  var mergedAudit = [];
+  var duplicateIds = {};
+  var closedSessions = 0;
+
+  duplicateKeys.forEach(function(key) {
+    groups[key].forEach(function(item) { duplicateIds[String(item.SessionId)] = true; });
+  });
+  sessions.forEach(function(item) {
+    if (!duplicateIds[String(item.SessionId)]) {
+      if (boolValue(item.IsOpen)) {
+        item.IsOpen = false;
+        item.ClosedAt = updatedAt;
+        item.UpdatedAt = updatedAt;
+        closedSessions++;
+      }
+      mergedSessions.push(objectRow("Sessions", item));
+    }
+  });
+  attendance.forEach(function(item) {
+    if (!duplicateIds[String(item.SessionId)]) mergedAttendance.push(objectRow("Attendance", item));
+  });
+  bindings.forEach(function(item) {
+    if (!duplicateIds[String(item.SessionId)]) mergedBindings.push(objectRow("DeviceBindings", item));
+  });
+  audit.forEach(function(item) {
+    if (!duplicateIds[String(item.SessionId)]) mergedAudit.push(objectRow("AuditLog", item));
+  });
+
+  duplicateKeys.forEach(function(key) {
+    var group = groups[key];
+    group.sort(function(left, right) {
+      function score(item) {
+        var id = String(item.SessionId);
+        var rows = attendance.filter(function(record) { return String(record.SessionId) === id; });
+        var present = rows.filter(function(record) {
+          return String(record.Status).toUpperCase() === "PRESENT" ||
+            String(record.Status).toUpperCase() === "LATE";
+        }).length;
+        var time = new Date(item.UpdatedAt || item.OpenedAt || 0).getTime();
+        return (boolValue(item.IsOpen) ? 1000000000000000 : 0) +
+          present * 1000000000 + rows.length * 1000000 + (isNaN(time) ? 0 : time);
+      }
+      return score(right) - score(left);
+    });
+    var canonical = group[0];
+    var canonicalId = String(canonical.SessionId);
+    var anyOpen = group.some(function(item) { return boolValue(item.IsOpen); });
+    closedSessions += group.filter(function(item) {
+      return boolValue(item.IsOpen);
+    }).length;
+    canonical.IsOpen = false;
+    canonical.ClosedAt = anyOpen ? updatedAt : canonical.ClosedAt;
+    canonical.UpdatedAt = updatedAt;
+    canonical.MeetingNumber = group.reduce(function(best, item) {
+      var number = Number(item.MeetingNumber || 0);
+      return number > 0 && (best === 0 || number < best) ? number : best;
+    }, 0);
+    canonical.TotalMeetings = group.reduce(function(best, item) {
+      return Math.max(best, Number(item.TotalMeetings || 20));
+    }, 20);
+    mergedSessions.push(objectRow("Sessions", canonical));
+    group.forEach(function(item) { replacementById[String(item.SessionId)] = canonicalId; });
+
+    var studentByRollNo = {};
+    attendance.forEach(function(item) {
+      if (!replacementById[String(item.SessionId)] || replacementById[String(item.SessionId)] !== canonicalId) return;
+      var rollNo = String(item.RollNo || "").trim().toUpperCase();
+      if (!rollNo) return;
+      var current = studentByRollNo[rollNo];
+      var candidatePresent = String(item.Status).toUpperCase() === "PRESENT" ||
+        String(item.Status).toUpperCase() === "LATE";
+      var currentPresent = current && String(current.Status).toUpperCase() === "PRESENT";
+      if (!current || (candidatePresent && !currentPresent) ||
+          (candidatePresent === currentPresent && item.CheckinTime && !current.CheckinTime)) {
+        var copy = {};
+        Object.keys(item).forEach(function(name) { copy[name] = item[name]; });
+        copy.SessionId = canonicalId;
+        copy.Status = candidatePresent ? "PRESENT" : "ABSENT";
+        copy.ClassCode = canonical.ClassCode;
+        copy.SubjectCode = canonical.SubjectCode;
+        copy.Slot = canonical.Slot;
+        copy.UpdatedAt = updatedAt;
+        studentByRollNo[rollNo] = copy;
+      }
+    });
+    Object.keys(studentByRollNo).sort().forEach(function(rollNo) {
+      mergedAttendance.push(objectRow("Attendance", studentByRollNo[rollNo]));
+    });
+
+    var bindingKeys = {};
+    bindings.forEach(function(item) {
+      if (!replacementById[String(item.SessionId)] || replacementById[String(item.SessionId)] !== canonicalId) return;
+      var bindingKey = String(item.BindingId || "") + "|" + String(item.DeviceHash || "") + "|" + String(item.RollNo || "");
+      if (bindingKeys[bindingKey]) return;
+      bindingKeys[bindingKey] = true;
+      item.SessionId = canonicalId;
+      item.UpdatedAt = updatedAt;
+      mergedBindings.push(objectRow("DeviceBindings", item));
+    });
+
+    var auditKeys = {};
+    audit.forEach(function(item) {
+      if (!replacementById[String(item.SessionId)] || replacementById[String(item.SessionId)] !== canonicalId) return;
+      var auditKey = [item.AuditId, item.Action, item.RollNo, item.CreatedAt].join("|");
+      if (auditKeys[auditKey]) return;
+      auditKeys[auditKey] = true;
+      item.SessionId = canonicalId;
+      item.UpdatedAt = updatedAt;
+      mergedAudit.push(objectRow("AuditLog", item));
+    });
+  });
+
+  for (var m = 0; m < meetings.length; m++) {
+    var linkedId = String(meetings[m].SessionId || "");
+    if (replacementById[linkedId]) {
+      meetings[m].SessionId = replacementById[linkedId];
+      linkedId = meetings[m].SessionId;
+    }
+    if (linkedId) {
+      meetings[m].Status = "CLOSED";
+      meetings[m].UpdatedAt = updatedAt;
+    }
+  }
+  replaceRows("Sessions", function() { return true; }, mergedSessions);
+  replaceRows("Attendance", function() { return true; }, mergedAttendance);
+  replaceRows("DeviceBindings", function() { return true; }, mergedBindings);
+  replaceRows("AuditLog", function() { return true; }, mergedAudit);
+  replaceRows("CourseMeetings", function() { return true; }, meetings.map(function(item) {
+    return objectRow("CourseMeetings", item);
+  }));
+
+  return {
+    duplicateGroups: duplicateKeys.length,
+    removedSessions: Object.keys(duplicateIds).length - duplicateKeys.length,
+    closedSessions: closedSessions,
+    backupUrl: backupUrl,
+    sessionCount: mergedSessions.length
+  };
+}
+
 function boolValue(value) {
   return value === true || String(value).toLowerCase() === "true";
 }
@@ -576,7 +881,7 @@ function doGet(e) {
     var action = String(params.action || "health");
 
     if (action === "health") {
-      return jsonOutput({status: "success", database: "Google Sheets", version: 6});
+      return jsonOutput({status: "success", database: "Google Sheets", version: 7});
     }
 
     if (action === "getRoster" || action === "getStudents") {
@@ -619,6 +924,19 @@ function doGet(e) {
       return jsonOutput(buildSessionPayload(sessions.length ? sessions[0] : null, attendance, bindings, audit));
     }
 
+    if (action === "getCourseMeetings") {
+      var meetingClass = String(params.classCode || "").toUpperCase();
+      var meetingSubject = String(params.subjectCode || "").toUpperCase();
+      var courseMeetings = readObjects("CourseMeetings").filter(function(item) {
+        return (!meetingClass || String(item.ClassCode).toUpperCase() === meetingClass) &&
+          (!meetingSubject || String(item.SubjectCode).toUpperCase() === meetingSubject);
+      });
+      courseMeetings.sort(function(left, right) {
+        return Number(left.MeetingNumber || 0) - Number(right.MeetingNumber || 0);
+      });
+      return jsonOutput({status: "success", count: courseMeetings.length, meetings: courseMeetings});
+    }
+
     return jsonOutput({status: "error", error: "Unsupported action"});
   } catch (err) {
     return jsonOutput({status: "error", error: err.toString()});
@@ -632,6 +950,33 @@ function doPost(e) {
     var data = JSON.parse(e.postData.contents);
     var now = data.syncedAt || data.updatedAt || new Date().toISOString();
 
+    if (data.action === "syncCourseMeetings") {
+      var syncResult = syncCourseMeetingPlan(data.meetings || [], now);
+      return jsonOutput({
+        status: "success",
+        message: "Đã đồng bộ kế hoạch buổi học.",
+        count: syncResult.count,
+        courseCount: syncResult.courseCount
+      });
+    }
+
+    if (data.action === "normalizeDuplicateSessions") {
+      var normalizeResult = normalizeDuplicateSessions(now);
+      return jsonOutput({
+        status: "success",
+        message: normalizeResult.duplicateGroups
+          ? "Đã gộp session trùng, đóng phiên còn mở và tạo bản sao lưu."
+          : (normalizeResult.closedSessions
+            ? "Đã đóng các session còn mở và tạo bản sao lưu."
+            : "Không còn session trùng hoặc đang mở."),
+        duplicateGroups: normalizeResult.duplicateGroups,
+        removedSessions: normalizeResult.removedSessions,
+        closedSessions: normalizeResult.closedSessions,
+        sessionCount: normalizeResult.sessionCount,
+        backupUrl: normalizeResult.backupUrl
+      });
+    }
+
     if (data.action === "seedDemo") {
       var demoClasses = [
         {classCode: "SE1917", subjectCode: "PRN232"},
@@ -640,12 +985,14 @@ function doPost(e) {
         {classCode: "SE1920", subjectCode: "HCM202"}
       ];
       var demoSchedule = [
+        {sessionId: "DEMO-20260914-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 1, totalSessions: 20, date: "2026-09-14", openedAt: "2026-09-14T02:30:00.000Z", closedAt: "2026-09-14T04:45:00.000Z", completed: true},
+        {sessionId: "DEMO-20260917-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 2, totalSessions: 20, date: "2026-09-17", openedAt: "2026-09-17T02:30:00.000Z", closedAt: "2026-09-17T04:45:00.000Z", completed: true},
         {sessionId: "DEMO-SE1917-PRN232", classCode: "SE1917", subjectCode: "PRN232", slot: 1, sessionNumber: 3, totalSessions: 20, date: "2026-09-21", openedAt: "2026-09-21T00:00:00.000Z", closedAt: "2026-09-21T02:15:00.000Z", completed: true},
         {sessionId: "DEMO-SE1918-PRM393", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 3, totalSessions: 20, date: "2026-09-21", openedAt: "2026-09-21T02:30:00.000Z", closedAt: "2026-09-21T04:45:00.000Z", completed: true},
         {sessionId: "DEMO-SE1920-HCM202", classCode: "SE1920", subjectCode: "HCM202", slot: 1, sessionNumber: 5, totalSessions: 20, date: "2026-09-22", openedAt: "2026-09-22T00:00:00.000Z", closedAt: "2026-09-22T02:15:00.000Z", completed: true},
         {sessionId: "DEMO-SE1919-EXE201", classCode: "SE1919", subjectCode: "EXE201", slot: 2, sessionNumber: 5, totalSessions: 20, date: "2026-09-23", openedAt: "2026-09-23T02:30:00.000Z", closedAt: "", completed: false},
         {sessionId: "DEMO-20260924-SE1917-PRN232-S1", classCode: "SE1917", subjectCode: "PRN232", slot: 1, sessionNumber: 4, totalSessions: 20, date: "2026-09-24", openedAt: "2026-09-24T00:00:00.000Z", closedAt: "", completed: false},
-        {sessionId: "DEMO-20260924-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 4, totalSessions: 20, date: "2026-09-24", openedAt: "2026-09-24T02:30:00.000Z", closedAt: "", completed: false},
+        {sessionId: "DEMO-20260924-SE1918-PRM393-S2", classCode: "SE1918", subjectCode: "PRM393", slot: 2, sessionNumber: 4, totalSessions: 20, date: "2026-09-24", openedAt: "2026-09-24T02:30:00.000Z", closedAt: "2026-09-24T04:45:00.000Z", completed: true},
         {sessionId: "DEMO-20260924-SE1920-HCM202-S4", classCode: "SE1920", subjectCode: "HCM202", slot: 1, sessionNumber: 6, totalSessions: 20, date: "2026-09-25", openedAt: "2026-09-25T00:00:00.000Z", closedAt: "", completed: false}
       ];
       var names = [
@@ -699,7 +1046,17 @@ function doPost(e) {
           var studentEmail = studentRollNo.toLowerCase() + "@fpt.edu.vn";
           var status = "ABSENT";
           if (demoClassSession.completed) {
-            status = a === 6 || a === 18 ? "ABSENT" : "PRESENT";
+            var isAttendanceRiskDemo =
+              demoClassSession.classCode === "SE1918" &&
+              demoClassSession.subjectCode === "PRM393" &&
+              demoClassSession.sessionNumber <= 4 && a === 0;
+            var isSingleSessionDemoAbsence = demoClassSession.classCode === "SE1918"
+              ? (demoClassSession.sessionNumber === 3 && a === 6) ||
+                (demoClassSession.sessionNumber === 4 && a === 18)
+              : a === 6 || a === 18;
+            status = isAttendanceRiskDemo || isSingleSessionDemoAbsence
+              ? "ABSENT"
+              : "PRESENT";
           }
           var checkinTime = status === "PRESENT"
             ? demoClassSession.openedAt
@@ -762,6 +1119,16 @@ function doPost(e) {
       var session = data.session || {};
       var sessionId = String(session.sessionId || "");
       if (!sessionId) throw new Error("Missing sessionId");
+      var meetingKey = sessionMeetingKey(session);
+      var conflictingSession = readObjects("Sessions").filter(function(item) {
+        return sessionMeetingKey(item) === meetingKey &&
+          String(item.SessionId) !== sessionId;
+      })[0];
+      if (conflictingSession) {
+        throw new Error(
+          "DUPLICATE_MEETING: ca học đã thuộc session " + conflictingSession.SessionId
+        );
+      }
       upsertSession(session, now);
       upsertCourseMeeting(session, now);
 

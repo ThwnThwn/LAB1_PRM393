@@ -147,6 +147,7 @@ class _TimetableImageImportDialogState
         dayOfWeek: candidate.dayOfWeek!,
         room: room,
         slotTime: FapClassSlot.getSlotTimeRange(candidate.slot!),
+        instructor: candidate.instructor.text.trim(),
         campus: 'FUHCM',
         isOnline:
             room.toLowerCase().contains('online') ||
@@ -589,22 +590,6 @@ class _TimetableImageImportDialogState
               );
             },
           ),
-          const SizedBox(height: 10),
-          _textField(
-            candidate.subjectName,
-            'Tên môn',
-            'Building Cross-Platform Back-End Application With .NET',
-          ),
-          if (candidate.warnings.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                candidate.warnings.join(' • '),
-                style: const TextStyle(fontSize: 11, color: Color(0xFFB45309)),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -662,7 +647,10 @@ class _TimetableImageImportDialogState
         8,
         (index) => DropdownMenuItem(
           value: index + 1,
-          child: Text('Slot ${index + 1}'),
+          child: Text(
+            'Slot ${index + 1} • ${FapClassSlot.getSlotTimeRange(index + 1)}',
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ),
       onChanged: (value) => setState(() => candidate.slot = value),
@@ -699,10 +687,10 @@ class _TimetableImageImportDialogState
 class _EditableCandidate {
   final TextEditingController subjectCode;
   final TextEditingController subjectName;
+  final TextEditingController instructor;
   final TextEditingController classCode;
   final TextEditingController room;
   final double confidence;
-  final List<String> warnings;
   int? dayOfWeek;
   int? slot;
   bool selected = true;
@@ -710,14 +698,15 @@ class _EditableCandidate {
   _EditableCandidate({
     required String subjectCode,
     required String subjectName,
+    required String instructor,
     required String classCode,
     required String room,
     required this.dayOfWeek,
     required this.slot,
     required this.confidence,
-    required this.warnings,
   }) : subjectCode = TextEditingController(text: subjectCode),
        subjectName = TextEditingController(text: subjectName),
+       instructor = TextEditingController(text: instructor),
        classCode = TextEditingController(text: classCode),
        room = TextEditingController(text: room);
 
@@ -725,12 +714,12 @@ class _EditableCandidate {
     return _EditableCandidate(
       subjectCode: candidate.subjectCode,
       subjectName: candidate.subjectName,
+      instructor: candidate.instructor,
       classCode: candidate.classCode,
       room: candidate.room,
       dayOfWeek: candidate.dayOfWeek,
       slot: candidate.slot,
       confidence: candidate.confidence,
-      warnings: candidate.warnings,
     );
   }
 
@@ -738,12 +727,12 @@ class _EditableCandidate {
     return _EditableCandidate(
       subjectCode: '',
       subjectName: '',
+      instructor: '',
       classCode: '',
       room: '',
       dayOfWeek: null,
       slot: null,
       confidence: 0,
-      warnings: const ['Ca thêm thủ công'],
     );
   }
 
@@ -756,6 +745,7 @@ class _EditableCandidate {
   void dispose() {
     subjectCode.dispose();
     subjectName.dispose();
+    instructor.dispose();
     classCode.dispose();
     room.dispose();
   }

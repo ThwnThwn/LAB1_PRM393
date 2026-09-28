@@ -1,4 +1,4 @@
-import 'dart:typed_data';
+﻿import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -40,6 +40,19 @@ class _AddClassDialogState extends State<AddClassDialog> {
   int _sessionNumber = 1;
   int _totalSessions = 20;
   bool _isOnline = false;
+
+  /// Paired day rule fixed by FPTU: Mon<->Thu (1<->4), Tue<->Fri (2<->5), Wed<->Sat (3<->6)
+  int? get _pairedDay {
+    switch (_selectedDayOfWeek) {
+      case 1: return 4; // Thu 2 -> Thu 5
+      case 2: return 5; // Thu 3 -> Thu 6
+      case 3: return 6; // Thu 4 -> Thu 7
+      case 4: return 1; // Thu 5 -> Thu 2
+      case 5: return 2; // Thu 6 -> Thu 3
+      case 6: return 3; // Thu 7 -> Thu 4
+      default: return null; // CN khong co cap
+    }
+  }
 
   // Import mode: 0 = CSV/XLSX file, 1 = Google Sheets DB
   int _importMethodIndex = 0;
@@ -293,6 +306,28 @@ class _AddClassDialogState extends State<AddClassDialog> {
     );
 
     provider.addClassSlot(newSlot);
+
+    // Auto-create paired slot (FPTU fixed: Mon<->Thu, Tue<->Fri, Wed<->Sat)
+    final paired = _pairedDay;
+    if (paired != null) {
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final pairedSlot = FapClassSlot(
+        id: 'custom-$ts-paired',
+        subjectCode: subjectCode,
+        subjectName: subjectName,
+        classCode: classCode,
+        slot: _selectedSlot,
+        dayOfWeek: paired,
+        room: room.isNotEmpty ? room : (_isOnline ? 'Online' : 'NVH TBA'),
+        slotTime: FapClassSlot.getSlotTimeRange(_selectedSlot),
+        sessionNumber: _sessionNumber,
+        totalSessions: _totalSessions,
+        instructor: instructor.isNotEmpty ? instructor : 'Giang vien',
+        campus: 'FUHCM',
+        isOnline: _isOnline,
+      );
+      provider.addClassSlot(pairedSlot);
+    }
     Navigator.of(context).pop(newSlot);
   }
 
@@ -628,7 +663,31 @@ class _AddClassDialogState extends State<AddClassDialog> {
                           ),
                         ],
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 6),
+
+                      // Paired day chip (FPTU fixed schedule)
+                      if (_pairedDay != null)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              const Icon(
+                                Icons.sync_alt_rounded,
+                                size: 15,
+                                color: Color(0xFF1565C0),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Lich co dinh: ${FapClassSlot.getDayName(_selectedDayOfWeek)} + ${FapClassSlot.getDayName(_pairedDay!)} (theo lich FPTU)',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF1565C0),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
 
                       // Row 4: Giảng viên & Online Switch
                       Row(

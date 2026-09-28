@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -239,30 +241,32 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
   }
 
   Future<void> _copyAbsenceEmailDraft(AttendanceProvider provider) async {
-    final absent = provider.students
-        .where((student) => student.status == AttendanceStatus.absent)
-        .toList();
-    if (absent.isEmpty) {
-      _showMessage('Phiên hiện tại không có sinh viên vắng.');
+    final warnings = provider.attendanceWarnings;
+    if (warnings.isEmpty) {
+      _showMessage('Không có sinh viên nào chạm ngưỡng cảnh báo 20%.');
       return;
     }
     final session = provider.currentSession;
-    final recipients = absent
-        .map((student) => student.email.trim())
+    final recipients = warnings
+        .map((warning) => warning.student.email.trim())
         .where((email) => email.isNotEmpty)
         .join('; ');
-    final rollNumbers = absent.map((student) => student.rollNo).join(', ');
+    final attendanceSummary = warnings
+        .map(
+          (warning) =>
+              '${warning.student.rollNo}: ${warning.absentSessions}/${warning.totalSessions} buổi (${warning.absencePercentage.toStringAsFixed(0)}%)',
+        )
+        .join(', ');
     final draft =
         'Người nhận: $recipients\n\n'
         'Tiêu đề: Cảnh báo chuyên cần ${session.subjectCode} - ${session.classCode}\n\n'
-        'Nội dung:\nCác sinh viên sau đang được ghi nhận vắng ở Slot ${session.slot} ngày ${_displayDate(session.date)}: $rollNumbers. '
+        'Nội dung:\nCác sinh viên sau đã chạm hoặc vượt ngưỡng vắng 20% của môn học: $attendanceSummary. '
         'Vui lòng kiểm tra lại trạng thái chuyên cần trên FAP EduPulse.';
     await Clipboard.setData(ClipboardData(text: draft));
-    _showMessage('Đã sao chép mẫu email cho ${absent.length} sinh viên vắng.');
+    _showMessage(
+      'Đã sao chép mẫu email cho ${warnings.length} sinh viên cần cảnh báo.',
+    );
   }
-
-  static String _displayDate(DateTime date) =>
-      '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year}';
 
   static String _fileDate(DateTime date) =>
       '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
@@ -275,6 +279,7 @@ class _TeacherDashboardScreenState extends State<TeacherDashboardScreen> {
       provider.onNavigateToAttendance = () {
         if (mounted) setState(() => _selectedTabIndex = 1);
       };
+      unawaited(provider.loadInitialDashboardSelection());
     });
   }
 
@@ -1692,6 +1697,7 @@ class _DashboardOverviewTab extends StatelessWidget {
   static const Color _emerald600 = Color(0xFF059669);
   static const Color _emerald700 = Color(0xFF047857);
   static const Color _red100 = Color(0xFFFEE2E2);
+  static const Color _red200 = Color(0xFFFECACA);
   static const Color _red700 = Color(0xFFB91C1C);
   static const Color _amber50 = Color(0xFFFFFBEB);
   static const Color _amber100 = Color(0xFFFEF3C7);
@@ -1788,9 +1794,43 @@ class _DashboardOverviewTab extends StatelessWidget {
 
   // ── ABSENCE WARNING BANNER ──
   Widget _buildAbsenceWarningBanner(AttendanceProvider provider) {
-    // Show warning if any absence data exists (based on current roster)
-    final absentCount = provider.countAbsent;
-    final hasWarning = provider.selectedSlot != null && absentCount > 0;
+    if (provider.initialDashboardLoadInProgress ||
+        provider.loadingSelectedSession) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _DS.surfaceContainerLow,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _DS.outlineVariant),
+        ),
+        child: const Row(
+          children: [
+            SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2.5),
+            ),
+            SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Đang tải dữ liệu chuyên cần',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  Text('Đang kiểm tra lịch sử các lớp trên Google Sheets…'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final warnings = provider.attendanceWarnings;
+    final hasWarning = provider.selectedSlot != null && warnings.isNotEmpty;
+    final hasCritical = warnings.any((warning) => warning.exceedsExamThreshold);
 
     if (!hasWarning) {
       return Container(
@@ -1832,7 +1872,7 @@ class _DashboardOverviewTab extends StatelessWidget {
                   Text(
                     provider.selectedSlot == null
                         ? 'Hãy chọn một ca dạy trong thời khóa biểu để xem thông tin lớp.'
-                        : 'Không có sinh viên nào cần cảnh báo chuyên cần trong phiên hiện tại.',
+                        : 'Không có sinh viên nào chạm ngưỡng vắng 20% của môn học.',
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 13,
                       color: _emerald600,
@@ -1852,155 +1892,203 @@ class _DashboardOverviewTab extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _amber200),
       ),
-      clipBehavior: Clip.antiAlias,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(width: 5, color: _container),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Title row
-                  Row(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Title row
+            Row(
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: _amber100,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _amber200),
+                  ),
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    color: _container,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: _amber100,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: _amber200),
-                        ),
-                        child: Icon(
-                          Icons.warning_amber_rounded,
-                          color: _container,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    'Cảnh báo chuyên cần: Có $absentCount sinh viên vắng trong phiên hiện tại',
-                                    style: GoogleFonts.plusJakartaSans(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 14,
-                                      color: _amber950,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: _red100,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'Khẩn cấp',
-                                    style: GoogleFonts.plusJakartaSans(
-                                      color: _red700,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Quy chế FPT: sinh viên vắng quá 20% tổng số giờ giảng dạy sẽ bị đình chỉ tư cách tham gia thi (FE).',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12,
-                                color: _amber800,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      // Action buttons
                       Row(
                         children: [
-                          ElevatedButton.icon(
-                            onPressed: onCopyAbsenceEmail,
-                            icon: const Icon(
-                              Icons.content_copy_rounded,
-                              size: 16,
-                            ),
-                            label: Text(
-                              'Sao chép email cảnh báo',
+                          Flexible(
+                            child: Text(
+                              'Cảnh báo chuyên cần: ${warnings.length} sinh viên chạm hoặc vượt ngưỡng',
                               style: GoogleFonts.plusJakartaSans(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                                color: _amber950,
                               ),
-                            ),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _amber600,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              elevation: 0,
                             ),
                           ),
                           const SizedBox(width: 8),
-                          OutlinedButton(
-                            onPressed: onShowAbsences,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _amber950,
-                              side: const BorderSide(color: _amber200),
-                              backgroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: hasCritical ? _red100 : _amber100,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              hasCritical ? 'Nguy cơ FE' : 'Chạm 20%',
+                              style: GoogleFonts.plusJakartaSans(
+                                color: hasCritical ? _red700 : _amber800,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
                               ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Từ 20% hiển thị cảnh báo; trên 20% là nguy cơ không đủ điều kiện dự thi (FE). Đã ghi nhận ${provider.courseCompletedSessions} buổi có dữ liệu.',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          color: _amber800,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: warnings.take(4).map((warning) {
+                          final critical = warning.exceedsExamThreshold;
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: critical ? _red200 : _amber200,
                               ),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Text(
-                                  'Xem danh sách',
-                                  style: GoogleFonts.plusJakartaSans(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                Icon(
+                                  critical
+                                      ? Icons.report_rounded
+                                      : Icons.warning_amber_rounded,
+                                  size: 16,
+                                  color: critical ? _red700 : _amber800,
                                 ),
-                                const SizedBox(width: 4),
-                                const Icon(
-                                  Icons.arrow_forward_rounded,
-                                  size: 14,
+                                const SizedBox(width: 7),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '${warning.student.fullName} · ${warning.student.rollNo}',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: _slate900,
+                                      ),
+                                    ),
+                                    Text(
+                                      '${provider.currentSession.subjectCode} · Lớp ${provider.currentSession.classCode}',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 11,
+                                        color: _slate600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${warning.absentSessions}/${warning.totalSessions} buổi · ${warning.absencePercentage.toStringAsFixed(0)}%',
+                                  style: GoogleFonts.jetBrainsMono(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: critical ? _red700 : _amber800,
+                                  ),
                                 ),
                               ],
                             ),
-                          ),
-                        ],
+                          );
+                        }).toList(),
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 12),
+                // Action buttons
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: onCopyAbsenceEmail,
+                      icon: const Icon(Icons.content_copy_rounded, size: 16),
+                      label: Text(
+                        'Sao chép email cảnh báo',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _amber600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: onShowAbsences,
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _amber950,
+                        side: const BorderSide(color: _amber200),
+                        backgroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Vắng buổi này',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          const Icon(Icons.arrow_forward_rounded, size: 14),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -2878,11 +2966,13 @@ class _DashboardOverviewTab extends StatelessWidget {
     AttendanceProvider provider,
     _CourseInfo course,
   ) {
-    final absent = provider.selectedSlot?.classCode == course.classCode
-        ? provider.countAbsent
-        : 0;
-    final hasAlert = absent >= 3;
-    final hasWarn = absent >= 1 && absent < 3;
+    final courseWarnings = provider.selectedSlot?.classCode == course.classCode
+        ? provider.attendanceWarnings
+        : const <CourseAttendanceWarning>[];
+    final hasAlert = courseWarnings.any(
+      (warning) => warning.exceedsExamThreshold,
+    );
+    final hasWarn = courseWarnings.isNotEmpty && !hasAlert;
 
     return Container(
       key: ValueKey('course-card-${course.subjectCode}-${course.classCode}'),
@@ -2952,7 +3042,7 @@ class _DashboardOverviewTab extends StatelessWidget {
                             ),
                             const SizedBox(width: 3),
                             Text(
-                              '$absent SV ≥3 buổi',
+                              '${courseWarnings.length} SV nguy cơ FE',
                               style: GoogleFonts.jetBrainsMono(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,
@@ -2973,7 +3063,7 @@ class _DashboardOverviewTab extends StatelessWidget {
                           borderRadius: BorderRadius.circular(5),
                         ),
                         child: Text(
-                          '$absent SV ≥1 buổi',
+                          '${courseWarnings.length} SV chạm 20%',
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 11,
                             fontWeight: FontWeight.w700,
