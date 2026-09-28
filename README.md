@@ -167,7 +167,9 @@ Nếu chỉ test trên cùng máy, có thể dùng `http://127.0.0.1:8080`. Khô
    rồi bấm **Nhập ca**.
 
 Ảnh được OCR bởi Tesseract ngay trong backend chạy trên máy; không gửi tới dịch vụ
-OCR bên ngoài. Lịch đã xác nhận được lưu cục bộ và tự khôi phục khi mở lại ứng dụng.
+OCR bên ngoài. Khi xác nhận import, ứng dụng tạo đủ kế hoạch buổi học của từng môn,
+ghi ngay vào tab `CourseMeetings`, rồi mới lưu lịch cục bộ. Nếu Google Sheets chưa
+ghi thành công, lịch cục bộ cũ được giữ nguyên để tránh lệch dữ liệu.
 
 ## Luồng demo đề xuất
 
@@ -207,7 +209,9 @@ OCR bên ngoài. Lịch đã xác nhận được lưu cục bộ và tự khôi
 7. Sau khi cấu hình, Sheet là nguồn duy nhất cho roster, phiên, điểm danh, thiết bị
    và audit log. Desktop và cổng FAP mô phỏng đều đọc cùng nguồn này.
 8. Để có dữ liệu ngay khi demo, bấm **Tạo dữ liệu demo**. Lệnh tạo lịch tuần
-   21/09–27/09/2026 gồm 7 ca và một roster chung 35 sinh viên áp dụng cho 4 lớp.
+   21/09–27/09/2026 gồm 7 ca, 2 phiên lịch sử và một roster chung 35 sinh viên
+   áp dụng cho 4 lớp. Sinh viên `SE191701` của lớp `SE1918` được seed vắng
+   4/20 buổi môn `PRM393` để kiểm tra cảnh báo chuyên cần.
    HCM202 học Slot 1 vào Thứ 3 và Thứ 6.
    Dữ liệu điểm danh mẫu được ghi trong cả sáu tab. Có thể chạy lại;
    chỉ các dòng có khóa `DEMO-*` và roster `SE1917`–`SE1920` được thay thế.
@@ -253,6 +257,8 @@ Dữ liệu cũ vẫn tương thích: `LATE` được đọc thành `PRESENT`, c
 | `GET` | `/api/sessions/{id}/audit` | Xem nhật ký chỉnh sửa |
 | `GET` | `/api/sessions/{id}/export.csv` | Xuất CSV của phiên |
 | `POST` | `/api/google-sheets/seed-demo` | Tạo lại bộ dữ liệu demo trong Google Sheets |
+| `POST` | `/api/course-meetings` | Đồng bộ toàn bộ kế hoạch buổi học sau khi nhập TKB |
+| `POST` | `/api/google-sheets/normalize-sessions` | Sao lưu, gộp phiên trùng và đóng các phiên còn mở |
 | SignalR | `/hubs/attendance` | Cập nhật dashboard trực tiếp |
 
 ## Cấu trúc thư mục

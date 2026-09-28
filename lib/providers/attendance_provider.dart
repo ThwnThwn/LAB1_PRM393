@@ -21,6 +21,8 @@ class AttendanceProvider extends ChangeNotifier {
       'fap_attendance_teacher_timetable_v1';
   static const String _timetableAnchorWeekPreferenceKey =
       'fap_attendance_teacher_timetable_anchor_week_v1';
+  static const String _lastSelectedSlotPreferenceKey =
+      'fap_attendance_last_selected_slot_v1';
   late AttendanceSession _currentSession;
   List<Student> _students = [];
   Timer? _dashboardPollTimer;
@@ -64,6 +66,10 @@ class AttendanceProvider extends ChangeNotifier {
   // --- Timetable & Class/Slot Management ---
   List<FapClassSlot> _classSlots = [];
   late final Future<void> _timetableLoadFuture;
+  Future<bool>? _initialDashboardSelectionFuture;
+  bool _initialDashboardLoadInProgress = false;
+  String? _lastSelectedSlotId;
+  List<Map<String, dynamic>>? _initialDashboardSessions;
   FapClassSlot? _selectedSlot;
   DateTime _currentWeekStart = _getWeekStart(DateTime.now());
   DateTime _timetableMeetingAnchorWeekStart = _getWeekStart(DateTime.now());
@@ -71,6 +77,9 @@ class AttendanceProvider extends ChangeNotifier {
 
   // Per-class student rosters: classCode -> List<Student>
   final Map<String, List<Student>> _classRosters = {};
+  final Map<String, int> _courseAbsenceCounts = {};
+  int _courseTotalSessions = 20;
+  int _courseCompletedSessions = 0;
 
   // Navigation callback (set by dashboard to switch tabs)
   VoidCallback? onNavigateToAttendance;
@@ -124,6 +133,7 @@ class AttendanceProvider extends ChangeNotifier {
   bool get isSessionOpen => _currentSession.isOpen;
   bool get sessionOperationInProgress => _sessionOperationInProgress;
   bool get loadingSelectedSession => _loadingSelectedSession;
+  bool get initialDashboardLoadInProgress => _initialDashboardLoadInProgress;
   bool get isOtpPaused => _otpProvider?.isPaused ?? false;
   bool get otpPauseOperationInProgress => _otpPauseOperationInProgress;
   String? get serverSessionId => _currentSession.serverSessionId;
@@ -205,6 +215,33 @@ class AttendanceProvider extends ChangeNotifier {
   int get countTotal => _students.length;
   double get attendancePercentage =>
       countTotal == 0 ? 0 : countPresent / countTotal * 100;
+
+  int get courseCompletedSessions => _courseCompletedSessions;
+
+  List<CourseAttendanceWarning> get attendanceWarnings {
+    final totalSessions = _courseTotalSessions <= 0 ? 20 : _courseTotalSessions;
+    final warningThreshold = (totalSessions + 4) ~/ 5;
+    final warnings = _students
+        .map((student) {
+          final absentSessions = _courseAbsenceCounts[student.rollNo] ?? 0;
+          return CourseAttendanceWarning(
+            student: student,
+            absentSessions: absentSessions,
+            totalSessions: totalSessions,
+          );
+        })
+        .where((warning) => warning.absentSessions >= warningThreshold)
+        .toList();
+    warnings.sort((left, right) {
+      final absenceComparison = right.absentSessions.compareTo(
+        left.absentSessions,
+      );
+      return absenceComparison != 0
+          ? absenceComparison
+          : left.student.rollNo.compareTo(right.student.rollNo);
+    });
+    return warnings;
+  }
 
   void clearLastCheckinNotification() {
     if (_lastCheckinNotification == null) return;
@@ -300,6 +337,8 @@ class AttendanceProvider extends ChangeNotifier {
       _students = [];
       _studentsVersion++;
       _latestServerStudents.clear();
+      _courseAbsenceCounts.clear();
+      _courseCompletedSessions = 0;
       _currentSession = AttendanceSession(
         classCode: '',
         subjectCode: '',
@@ -477,6 +516,7 @@ class AttendanceProvider extends ChangeNotifier {
       _lastCheckinNotification =
           payload['message']?.toString() ?? 'Đã đóng phiên điểm danh.';
       _otpProvider?.resume();
+      await _refreshSelectedCourseAttendanceHistory();
       // FAP Demo can still correct Present/Absent after closing a session.
       // Keep the same SignalR group and polling fallback until another slot
       // is selected, so the closed-session dashboard remains synchronized.
@@ -833,9 +873,14 @@ class AttendanceProvider extends ChangeNotifier {
     _dashboardPollTimer?.cancel();
     unawaited(_liveService.disconnect());
     _selectedSlot = occurrence;
+    _lastSelectedSlotId = slot.id;
+    unawaited(_persistLastSelectedSlotId(slot.id));
     _latestServerStudents.clear();
     _otpProvider?.resume();
     _deviceBindings = [];
+    _courseAbsenceCounts.clear();
+    _courseTotalSessions = occurrence.totalSessions;
+    _courseCompletedSessions = 0;
     _currentSession = AttendanceSession(
       classCode: occurrence.classCode,
       subjectCode: occurrence.subjectCode,
@@ -857,6 +902,130 @@ class AttendanceProvider extends ChangeNotifier {
     );
     unawaited(_rosterLoadFuture);
     return true;
+  }
+
+  /// Loads the most relevant class when the dashboard first opens so roster
+  /// statistics and attendance warnings never depend on a manual click.
+  Future<bool> loadInitialDashboardSelection({DateTime? referenceDate}) {
+    return _initialDashboardSelectionFuture ??= _loadInitialDashboardSelection(
+      referenceDate ?? DateTime.now(),
+    );
+  }
+
+  Future<bool> _loadInitialDashboardSelection(DateTime referenceDate) async {
+    _initialDashboardLoadInProgress = true;
+    notifyListeners();
+    try {
+      await _timetableLoadFuture;
+      if (_selectedSlot != null) {
+        await _rosterLoadFuture;
+        return true;
+      }
+      if (_classSlots.isEmpty) return false;
+
+      _currentWeekStart = _getWeekStart(referenceDate);
+      final cutoffDate = DateUtils.dateOnly(referenceDate);
+      final rememberedTarget = _templateById(_lastSelectedSlotId);
+      FapClassSlot? target;
+
+      try {
+        final sessions = await _attendanceApi.getSessions(limit: 100);
+        _initialDashboardSessions = sessions;
+        final groupedSessions = <String, List<Map<String, dynamic>>>{};
+        for (final session in sessions) {
+          final classCode = session['classCode']
+              ?.toString()
+              .trim()
+              .toUpperCase();
+          final subjectCode = session['subjectCode']
+              ?.toString()
+              .trim()
+              .toUpperCase();
+          if (classCode == null ||
+              classCode.isEmpty ||
+              subjectCode == null ||
+              subjectCode.isEmpty) {
+            continue;
+          }
+          groupedSessions
+              .putIfAbsent('$classCode|$subjectCode', () => [])
+              .add(session);
+        }
+
+        final atRiskCourses = <String>{};
+        for (final entry in groupedSessions.entries) {
+          final aggregate = _aggregateCourseAttendance(
+            entry.value,
+            cutoffDate: cutoffDate,
+            fallbackTotalSessions: 20,
+          );
+          if (aggregate.hasWarning) atRiskCourses.add(entry.key);
+        }
+        if (rememberedTarget != null) {
+          final rememberedKey =
+              '${rememberedTarget.classCode.trim().toUpperCase()}|${rememberedTarget.subjectCode.trim().toUpperCase()}';
+          if (atRiskCourses.contains(rememberedKey)) {
+            target = rememberedTarget;
+          }
+        }
+        if (atRiskCourses.isNotEmpty) {
+          target ??= _bestInitialTemplate(
+            referenceDate,
+            preferredCourseKeys: atRiskCourses,
+          );
+        }
+      } catch (error) {
+        debugPrint('Initial attendance warning preload failed: $error');
+      }
+
+      target ??= rememberedTarget;
+      target ??= _bestInitialTemplate(referenceDate);
+      if (target == null || !selectTimetableSlot(target)) return false;
+      await _rosterLoadFuture;
+      return _selectedSlot?.id == target.id;
+    } finally {
+      _initialDashboardLoadInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  FapClassSlot? _templateById(String? slotId) {
+    if (slotId == null || slotId.isEmpty) return null;
+    for (final slot in _classSlots) {
+      if (slot.id == slotId) return slot;
+    }
+    return null;
+  }
+
+  FapClassSlot? _bestInitialTemplate(
+    DateTime referenceDate, {
+    Set<String> preferredCourseKeys = const {},
+  }) {
+    final candidates = preferredCourseKeys.isEmpty
+        ? [..._classSlots]
+        : _classSlots.where((slot) {
+            final key =
+                '${slot.classCode.trim().toUpperCase()}|${slot.subjectCode.trim().toUpperCase()}';
+            return preferredCourseKeys.contains(key);
+          }).toList();
+    if (candidates.isEmpty && preferredCourseKeys.isNotEmpty) return null;
+
+    final referenceWeekday = referenceDate.weekday;
+    candidates.sort((left, right) {
+      int dayDistance(FapClassSlot slot) {
+        final distance = slot.dayOfWeek - referenceWeekday;
+        return distance >= 0 ? distance : distance.abs() + 7;
+      }
+
+      final leftDistance = dayDistance(left);
+      final rightDistance = dayDistance(right);
+      final dayOrder = leftDistance.compareTo(rightDistance);
+      if (dayOrder != 0) return dayOrder;
+      final slotOrder = left.slot.compareTo(right.slot);
+      if (slotOrder != 0) return slotOrder;
+      return left.subjectCode.compareTo(right.subjectCode);
+    });
+    return candidates.firstOrNull;
   }
 
   /// Selects a slot and waits until its stored session or roster has loaded.
@@ -890,12 +1059,21 @@ class AttendanceProvider extends ChangeNotifier {
         !sameSelection() || _currentSession.serverSessionId != null;
 
     try {
-      final sessions = await _attendanceApi.getSessions(
-        classCode: classCode,
-        subjectCode: selectedSubject,
-        slot: selectedSlotNumber,
-      );
+      final preloadedSessions = _initialDashboardSessions;
+      _initialDashboardSessions = null;
+      final sessions = preloadedSessions == null
+          ? await _attendanceApi.getSessions(
+              classCode: classCode,
+              subjectCode: selectedSubject,
+            )
+          : preloadedSessions.where((session) {
+              return session['classCode']?.toString().trim().toUpperCase() ==
+                      classCode.trim().toUpperCase() &&
+                  session['subjectCode']?.toString().trim().toUpperCase() ==
+                      selectedSubject.trim().toUpperCase();
+            }).toList();
       if (selectionChanged()) return;
+      _applyCourseAttendanceHistory(sessions);
       final matching = AttendanceSessionMatcher.forTimetableSlot(
         sessions,
         classCode: classCode,
@@ -1036,7 +1214,7 @@ class AttendanceProvider extends ChangeNotifier {
       throw StateError('Không có ca học hợp lệ để nhập.');
     }
 
-    _timetableMeetingAnchorWeekStart = _getWeekStart(DateTime.now());
+    final nextAnchorWeekStart = _getWeekStart(DateTime.now());
 
     final next = replaceExisting ? <FapClassSlot>[] : [..._classSlots];
     final keys = next.map(_slotIdentity).toSet();
@@ -1054,6 +1232,10 @@ class AttendanceProvider extends ChangeNotifier {
       return a.subjectCode.compareTo(b.subjectCode);
     });
 
+    final meetingPlan = _buildCourseMeetingPlan(next, nextAnchorWeekStart);
+    await _attendanceApi.syncCourseMeetings(meetingPlan);
+
+    _timetableMeetingAnchorWeekStart = nextAnchorWeekStart;
     _classSlots = next;
     _cachedClassCodes = null;
     _classCodeFilter = null;
@@ -1077,9 +1259,90 @@ class AttendanceProvider extends ChangeNotifier {
     return importedCount;
   }
 
+  static List<Map<String, dynamic>> _buildCourseMeetingPlan(
+    List<FapClassSlot> slots,
+    DateTime anchorWeekStart,
+  ) {
+    final courses = <String, List<FapClassSlot>>{};
+    for (final slot in slots) {
+      final key =
+          '${slot.classCode.trim().toUpperCase()}|${slot.subjectCode.trim().toUpperCase()}';
+      courses.putIfAbsent(key, () => []).add(slot);
+    }
+
+    final meetings = <Map<String, dynamic>>[];
+    for (final courseSlots in courses.values) {
+      courseSlots.sort((left, right) {
+        final dayOrder = left.dayOfWeek.compareTo(right.dayOfWeek);
+        if (dayOrder != 0) return dayOrder;
+        final slotOrder = left.slot.compareTo(right.slot);
+        if (slotOrder != 0) return slotOrder;
+        return left.id.compareTo(right.id);
+      });
+      if (courseSlots.isEmpty) continue;
+
+      var firstMeeting = courseSlots.first.sessionNumber;
+      var totalMeetings = courseSlots.first.totalSessions;
+      for (final slot in courseSlots.skip(1)) {
+        if (slot.sessionNumber < firstMeeting) {
+          firstMeeting = slot.sessionNumber;
+        }
+        if (slot.totalSessions > totalMeetings) {
+          totalMeetings = slot.totalSessions;
+        }
+      }
+      if (firstMeeting < 1) firstMeeting = 1;
+      if (totalMeetings < firstMeeting) totalMeetings = firstMeeting;
+
+      for (
+        var meetingNumber = 1;
+        meetingNumber <= totalMeetings;
+        meetingNumber++
+      ) {
+        final relative = meetingNumber - firstMeeting;
+        final weekOffset = (relative / courseSlots.length).floor();
+        final templateIndex = relative - weekOffset * courseSlots.length;
+        final template = courseSlots[templateIndex];
+        final date = anchorWeekStart.add(
+          Duration(days: weekOffset * 7 + template.dayOfWeek - 1),
+        );
+        meetings.add({
+          'classCode': template.classCode.trim().toUpperCase(),
+          'subjectCode': template.subjectCode.trim().toUpperCase(),
+          'meetingNumber': meetingNumber,
+          'totalMeetings': totalMeetings,
+          'date': _dateKey(date),
+          'slot': template.slot,
+        });
+      }
+    }
+    meetings.sort((left, right) {
+      final classOrder = (left['classCode'] as String).compareTo(
+        right['classCode'] as String,
+      );
+      if (classOrder != 0) return classOrder;
+      final subjectOrder = (left['subjectCode'] as String).compareTo(
+        right['subjectCode'] as String,
+      );
+      if (subjectOrder != 0) return subjectOrder;
+      return (left['meetingNumber'] as int).compareTo(
+        right['meetingNumber'] as int,
+      );
+    });
+    return meetings;
+  }
+
+  static String _dateKey(DateTime value) =>
+      '${value.year.toString().padLeft(4, '0')}-'
+      '${value.month.toString().padLeft(2, '0')}-'
+      '${value.day.toString().padLeft(2, '0')}';
+
   Future<void> _loadSavedTimetable() async {
     try {
       final preferences = await SharedPreferences.getInstance();
+      _lastSelectedSlotId = preferences.getString(
+        _lastSelectedSlotPreferenceKey,
+      );
       final encodedAnchor = preferences.getString(
         _timetableAnchorWeekPreferenceKey,
       );
@@ -1114,6 +1377,17 @@ class AttendanceProvider extends ChangeNotifier {
       // Unit tests and non-plugin isolates do not register SharedPreferences.
     } catch (error) {
       debugPrint('Không thể tải thời khóa biểu đã lưu: $error');
+    }
+  }
+
+  Future<void> _persistLastSelectedSlotId(String slotId) async {
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      await preferences.setString(_lastSelectedSlotPreferenceKey, slotId);
+    } on MissingPluginException {
+      // Unit tests and non-plugin isolates do not register SharedPreferences.
+    } catch (error) {
+      debugPrint('Không thể lưu ca được chọn gần nhất: $error');
     }
   }
 
@@ -1296,7 +1570,18 @@ class AttendanceProvider extends ChangeNotifier {
 
       final slot = _selectedSlot;
       if (slot != null) {
-        await _loadPersistedClassRoster(slot.classCode, slot.id);
+        final sessions = await _attendanceApi.getSessions(
+          classCode: slot.classCode,
+          subjectCode: slot.subjectCode,
+        );
+        if (_selectedSlot?.id == slot.id) {
+          _applyCourseAttendanceHistory(sessions);
+        }
+        if (_currentSession.serverSessionId == null) {
+          await _loadPersistedClassRoster(slot.classCode, slot.id);
+        } else {
+          await refreshSessionDashboard();
+        }
       }
       return true;
     } catch (error) {
@@ -1307,6 +1592,98 @@ class AttendanceProvider extends ChangeNotifier {
     } finally {
       _demoSeedInProgress = false;
       notifyListeners();
+    }
+  }
+
+  void _applyCourseAttendanceHistory(List<Map<String, dynamic>> sessions) {
+    final aggregate = _aggregateCourseAttendance(
+      sessions,
+      cutoffDate: DateUtils.dateOnly(_currentSession.date),
+      fallbackTotalSessions: _currentSession.totalSessions,
+    );
+
+    _courseAbsenceCounts
+      ..clear()
+      ..addAll(aggregate.absenceCounts);
+    _courseTotalSessions = aggregate.totalSessions;
+    _courseCompletedSessions = aggregate.completedSessions;
+  }
+
+  static _CourseAttendanceAggregate _aggregateCourseAttendance(
+    List<Map<String, dynamic>> sessions, {
+    required DateTime cutoffDate,
+    required int fallbackTotalSessions,
+  }) {
+    final absenceCounts = <String, int>{};
+    final countedMeetings = <String>{};
+    var totalSessions = fallbackTotalSessions;
+    final attendanceCutoffDate = DateUtils.dateOnly(cutoffDate);
+
+    for (final session in sessions) {
+      final sessionTotal = (session['totalSessions'] as num?)?.toInt() ?? 0;
+      if (sessionTotal > totalSessions) totalSessions = sessionTotal;
+
+      final sessionDate = AttendanceSessionMatcher.calendarDate(
+        session['date'],
+      );
+      if (sessionDate == null ||
+          DateUtils.dateOnly(sessionDate).isAfter(attendanceCutoffDate)) {
+        continue;
+      }
+
+      final closedAt = session['closedAt']?.toString().trim() ?? '';
+      if (session['isOpen'] == true || closedAt.isEmpty) continue;
+
+      final meetingNumber = (session['sessionNumber'] as num?)?.toInt() ?? 0;
+      final sessionId = session['sessionId']?.toString() ?? '';
+      final meetingKey = meetingNumber > 0
+          ? 'meeting:$meetingNumber'
+          : sessionId;
+      if (meetingKey.isEmpty || !countedMeetings.add(meetingKey)) continue;
+
+      final students = session['students'];
+      if (students is! List) continue;
+      for (final rawStudent in students.whereType<Map>()) {
+        final rollNo = rawStudent['rollNo']?.toString().trim().toUpperCase();
+        final status = rawStudent['status']?.toString().trim().toUpperCase();
+        if (rollNo == null || rollNo.isEmpty || status != 'ABSENT') continue;
+        absenceCounts[rollNo] = (absenceCounts[rollNo] ?? 0) + 1;
+      }
+    }
+
+    final normalizedTotalSessions = totalSessions <= 0 ? 20 : totalSessions;
+    final warningThreshold = (normalizedTotalSessions + 4) ~/ 5;
+    return _CourseAttendanceAggregate(
+      absenceCounts: absenceCounts,
+      totalSessions: normalizedTotalSessions,
+      completedSessions: countedMeetings.length,
+      hasWarning: absenceCounts.values.any(
+        (count) => count >= warningThreshold,
+      ),
+    );
+  }
+
+  Future<void> _refreshSelectedCourseAttendanceHistory() async {
+    final slot = _selectedSlot;
+    if (slot == null) return;
+
+    try {
+      final sessions = await _attendanceApi.getSessions(
+        classCode: slot.classCode,
+        subjectCode: slot.subjectCode,
+      );
+      final currentSlot = _selectedSlot;
+      if (currentSlot?.id != slot.id ||
+          currentSlot?.classCode != slot.classCode ||
+          currentSlot?.subjectCode != slot.subjectCode) {
+        return;
+      }
+      _applyCourseAttendanceHistory(sessions);
+      notifyListeners();
+    } catch (error) {
+      // Saving the attendance itself already succeeded. Keep that success and
+      // let the next slot selection retry the course-level summary refresh.
+      debugPrint('Course attendance history refresh failed: $error');
     }
   }
 
@@ -1414,6 +1791,7 @@ class AttendanceProvider extends ChangeNotifier {
       }
       _attendanceDrafts.clear();
       _applyServerSnapshot(Map<String, dynamic>.from(snapshot));
+      await _refreshSelectedCourseAttendanceHistory();
       _lastCheckinNotification =
           payload['message']?.toString() ?? 'Đã lưu lên Google Sheets.';
       _startDashboardPolling();
@@ -1443,6 +1821,9 @@ class AttendanceProvider extends ChangeNotifier {
         }
         if (latest != null) {
           _applyServerSnapshot(latest);
+          if (_attendanceDrafts.isEmpty) {
+            await _refreshSelectedCourseAttendanceHistory();
+          }
           _startDashboardPolling();
           unawaited(_connectLiveUpdates());
         }
@@ -1747,6 +2128,23 @@ class AttendanceProvider extends ChangeNotifier {
   }
 }
 
+class CourseAttendanceWarning {
+  final Student student;
+  final int absentSessions;
+  final int totalSessions;
+
+  const CourseAttendanceWarning({
+    required this.student,
+    required this.absentSessions,
+    required this.totalSessions,
+  });
+
+  double get absencePercentage =>
+      totalSessions <= 0 ? 0 : absentSessions * 100 / totalSessions;
+
+  bool get exceedsExamThreshold => absentSessions * 5 > totalSessions;
+}
+
 class _AttendanceDraft {
   final AttendanceStatus originalStatus;
   final AttendanceStatus status;
@@ -1756,5 +2154,19 @@ class _AttendanceDraft {
     required this.originalStatus,
     required this.status,
     required this.checkinTime,
+  });
+}
+
+class _CourseAttendanceAggregate {
+  final Map<String, int> absenceCounts;
+  final int totalSessions;
+  final int completedSessions;
+  final bool hasWarning;
+
+  const _CourseAttendanceAggregate({
+    required this.absenceCounts,
+    required this.totalSessions,
+    required this.completedSessions,
+    required this.hasWarning,
   });
 }

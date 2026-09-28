@@ -97,7 +97,8 @@ void main() {
     await tester.pumpWidget(const FapAttendanceApp());
 
     await tester.tap(find.byKey(const ValueKey('teaching-slot-picker')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
 
     expect(
       find.byKey(const ValueKey('teaching-slot-option-hcm202-tue-1')),

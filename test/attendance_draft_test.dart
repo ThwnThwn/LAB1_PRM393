@@ -20,6 +20,7 @@ class _DraftApi extends AttendanceApiService {
   int singleRowCalls = 0;
   List<Map<String, String>>? savedChanges;
   String remoteFirstStatus = 'ABSENT';
+  String remoteSecondStatus = 'PRESENT';
 
   List<Map<String, dynamic>> get _students => [
     {
@@ -32,7 +33,7 @@ class _DraftApi extends AttendanceApiService {
       'rollNo': 'SE192002',
       'fullName': 'Sinh viên 2',
       'email': 'se192002@fpt.edu.vn',
-      'status': 'PRESENT',
+      'status': remoteSecondStatus,
     },
   ];
 
@@ -42,7 +43,10 @@ class _DraftApi extends AttendanceApiService {
     'subjectCode': 'HCM202',
     'slot': 1,
     'date': '2026-09-22',
+    'sessionNumber': 4,
+    'totalSessions': 20,
     'isOpen': false,
+    'closedAt': '2026-09-22T10:00:00Z',
     'students': _students,
     'deviceBindings': <Map<String, dynamic>>[],
   };
@@ -58,7 +62,32 @@ class _DraftApi extends AttendanceApiService {
     String? classCode,
     String? subjectCode,
     int? slot,
-  }) async => hasSession ? [_snapshot] : [];
+  }) async {
+    if (!hasSession) return [];
+    const dates = ['2026-09-01', '2026-09-08', '2026-09-15', '2026-09-22'];
+    return List.generate(4, (index) {
+      final isCurrentSession = index == 3;
+      return {
+        ..._snapshot,
+        'sessionId': isCurrentSession
+            ? 'closed-session'
+            : 'history-${index + 1}',
+        'date': dates[index],
+        'sessionNumber': index + 1,
+        'closedAt': '${dates[index]}T10:00:00Z',
+        'students': [
+          {
+            ..._students[0],
+            'status': isCurrentSession ? remoteFirstStatus : 'ABSENT',
+          },
+          {
+            ..._students[1],
+            'status': isCurrentSession ? remoteSecondStatus : 'PRESENT',
+          },
+        ],
+      };
+    });
+  }
 
   @override
   Future<List<Map<String, dynamic>>> getClassRoster(String classCode) async =>
@@ -93,6 +122,14 @@ class _DraftApi extends AttendanceApiService {
     if (commitThenFail) {
       remoteFirstStatus = changes.first['status']!;
       throw const AttendanceApiException('Mất phản hồi sau khi lưu', 502);
+    }
+    for (final change in changes) {
+      switch (change['rollNo']) {
+        case 'SE192001':
+          remoteFirstStatus = change['status']!;
+        case 'SE192002':
+          remoteSecondStatus = change['status']!;
+      }
     }
     final statuses = {
       for (final change in changes) change['rollNo']!: change['status']!,
@@ -176,6 +213,8 @@ void main() {
         {'rollNo': 'SE192002', 'status': 'ABSENT', 'expectedStatus': 'PRESENT'},
       ]);
       expect(provider.hasUnsavedAttendanceChanges, isFalse);
+      expect(provider.courseCompletedSessions, 4);
+      expect(provider.attendanceWarnings, isEmpty);
     },
   );
 

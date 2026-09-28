@@ -80,6 +80,12 @@ class AttendanceApiService {
     return _sendJson('POST', '/api/google-sheets/seed-demo', null);
   }
 
+  Future<Map<String, dynamic>> syncCourseMeetings(
+    List<Map<String, dynamic>> meetings,
+  ) {
+    return _sendJson('POST', '/api/course-meetings', {'meetings': meetings});
+  }
+
   Future<Map<String, dynamic>> openSession(
     AttendanceSession session,
     List<Student> students,

@@ -8,10 +8,10 @@ namespace Attendance.Api.Services;
 public sealed class TimetableOcrService(IWebHostEnvironment environment)
 {
     private static readonly Regex SubjectCodePattern = new(
-        @"\b[A-Z]{2,4}\s*[-–]?\s*\d{3}[A-Z]?\b",
+        @"(?<![A-Z0-9])(?<prefix>[A-Z]{2,5})\s*[-–]?\s*(?<number>[0-9ILOSBZG]{3})(?<suffix>[A-Z]?)(?![A-Z0-9])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex ClassCodePattern = new(
-        @"\b[A-Z]{2,4}\s*[-–]?\s*\d{4,6}\b",
+        @"(?<![A-Z0-9])(?<prefix>[A-Z]{2})\s*[-–]?\s*(?<number>[0-9ILOSBZG]{4,6})(?![A-Z0-9])",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex RoomPattern = new(
         @"\b(?:(?:PH[ÒO]NG|ROOM)\s*)?(?:NVH|DE|BE|AL|P)\s*[-.]?\s*[A-Z]?\d{2,4}\b|\b(?:ONLINE|TRỰC\s*TUYẾN)\b",
@@ -20,8 +20,11 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
         @"\b(?:SLOT|CA|TI[EẾ]T)\s*[:#-]?\s*([1-8])\b",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex TimePattern = new(
-        @"\b(0?7[:.]00|0?9[:.]30|12[:.]30|15[:.]00|17[:.]30|17[:.]45|19[:.]30|20[:.]00)\b",
+        @"(?<!\d)(0?7|0?9|12|15|17|19|20)\s*[:.hH]\s*(00|30|45)(?!\d)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex InstructorPattern = new(
+        @"(?<![A-Za-z])(?<name>[A-Z][a-z]{2,}[A-Z]{2,5})(?![A-Za-z])",
+        RegexOptions.Compiled);
 
     private readonly string _tessdataPath = Path.Combine(environment.ContentRootPath, "tessdata");
 
@@ -73,7 +76,10 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
         foreach (var subjectLine in lines.Where(line => SubjectCodePattern.IsMatch(line.Text)))
         {
             var subjectMatch = SubjectCodePattern.Match(subjectLine.Text);
-            var subjectCode = CompactCode(subjectMatch.Value);
+            if (ClassCodePattern.IsMatch(subjectMatch.Value)) continue;
+
+            var rawSubjectCode = CompactCode(subjectMatch.Value);
+            var subjectCode = NormalizeSubjectCode(subjectMatch);
             if (subjectCode.Length < 5 ||
                 subjectCode.StartsWith("NVH", StringComparison.OrdinalIgnoreCase) ||
                 subjectCode.StartsWith("ROOM", StringComparison.OrdinalIgnoreCase) ||
@@ -84,20 +90,46 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
 
             var nearby = lines
                 .Where(line => IsNearby(subjectLine, line))
-                .OrderBy(line => Math.Abs(line.CenterY - subjectLine.CenterY))
+                .OrderBy(line => ProximityScore(subjectLine, line))
                 .ToList();
-            var combined = string.Join(" | ", nearby.Select(line => line.Text));
 
-            var classCode = ClassCodePattern.Matches(combined)
-                .Select(match => CompactCode(match.Value))
-                .FirstOrDefault(code => !string.Equals(code, subjectCode, StringComparison.OrdinalIgnoreCase))
-                ?? string.Empty;
-            var room = NormalizeRoom(RoomPattern.Match(combined).Value);
-            var day = nearby.Select(line => ParseDay(line.Text)).FirstOrDefault(value => value is not null)
-                ?? NearestDay(subjectLine, dayAnchors);
-            var slot = nearby.Select(line => ParseSlot(line.Text)).FirstOrDefault(value => value is not null)
-                ?? ParseTimeSlot(combined)
+            var classCandidate = nearby
+                .SelectMany(line => ClassCodePattern.Matches(line.Text)
+                    .Cast<Match>()
+                    .Select(match => (
+                        Line: line,
+                        Raw: CompactCode(match.Value),
+                        Code: NormalizeClassCode(match))))
+                .Where(item => !string.Equals(item.Code, subjectCode, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(item => ProximityScore(subjectLine, item.Line))
+                .FirstOrDefault();
+            var classCode = classCandidate.Code ?? string.Empty;
+            var rawClassCode = classCandidate.Raw ?? string.Empty;
+            var room = nearby
+                .SelectMany(line => RoomPattern.Matches(line.Text)
+                    .Cast<Match>()
+                    .Select(match => (Line: line, Room: NormalizeRoom(match.Value))))
+                .OrderBy(item => ProximityScore(subjectLine, item.Line))
+                .Select(item => item.Room)
+                .FirstOrDefault() ?? string.Empty;
+            var day = ParseDay(subjectLine.Text)
+                ?? NearestDay(subjectLine, dayAnchors)
+                ?? nearby.Select(line => ParseDay(line.Text)).FirstOrDefault(value => value is not null);
+            var directSlot = ParseSlot(subjectLine.Text);
+            var timeSlot = ParseTimeSlot(subjectLine.Text) is int directTimeSlot
+                ? new DetectedTimeSlot(directTimeSlot, subjectLine.Text)
+                : NearestTimeSlot(subjectLine, nearby);
+            var nearbyExplicitSlot = nearby
+                .Select(line => (Line: line, Slot: ParseSlot(line.Text)))
+                .Where(item => item.Slot is not null)
+                .OrderBy(item => ProximityScore(subjectLine, item.Line))
+                .Select(item => item.Slot)
+                .FirstOrDefault();
+            var slot = directSlot
+                ?? timeSlot?.Slot
+                ?? nearbyExplicitSlot
                 ?? NearestSlot(subjectLine, slotAnchors);
+            var instructor = PickInstructor(nearby, subjectLine);
             var subjectName = PickSubjectName(
                 nearby,
                 subjectLine,
@@ -106,6 +138,23 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
                 room);
 
             var warnings = new List<string>();
+            if (!string.Equals(rawSubjectCode, subjectCode, StringComparison.OrdinalIgnoreCase))
+            {
+                warnings.Add($"Đã tự sửa mã môn {rawSubjectCode} → {subjectCode}");
+            }
+            if (rawClassCode.Length > 0 &&
+                !string.Equals(rawClassCode, classCode, StringComparison.OrdinalIgnoreCase))
+            {
+                warnings.Add($"Đã tự sửa mã lớp {rawClassCode} → {classCode}");
+            }
+            if (directSlot is null && timeSlot is not null && slot == timeSlot.Slot)
+            {
+                warnings.Add($"Đã tự điền Slot {timeSlot.Slot} từ giờ học");
+            }
+            if (instructor.Length > 0)
+            {
+                warnings.Add($"Đã tách giảng viên {instructor} khỏi tên môn");
+            }
             if (classCode.Length == 0) warnings.Add("Chưa nhận diện được mã lớp");
             if (day is null) warnings.Add("Chưa xác định được thứ");
             if (slot is null) warnings.Add("Chưa xác định được slot");
@@ -117,6 +166,7 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
                 day,
                 slot,
                 room,
+                instructor,
                 Math.Clamp(subjectLine.Confidence, 0, 1),
                 warnings));
         }
@@ -162,6 +212,10 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
             : Math.Min(Math.Abs(source.X - candidate.Right), Math.Abs(candidate.X - source.Right));
         return verticalDistance <= Math.Max(150, source.Height * 7) && horizontalDistance <= 360;
     }
+
+    private static double ProximityScore(OcrLine source, OcrLine candidate) =>
+        Math.Abs(source.CenterX - candidate.CenterX) +
+        Math.Abs(source.CenterY - candidate.CenterY) * 0.35;
 
     private static int? NearestDay(OcrLine source, List<(OcrLine line, int? day)> anchors)
     {
@@ -209,7 +263,12 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
     {
         var match = TimePattern.Match(raw);
         if (!match.Success) return null;
-        var time = match.Groups[1].Value.Replace('.', ':').TrimStart('0');
+        if (!int.TryParse(match.Groups[1].Value, out var hour) ||
+            !int.TryParse(match.Groups[2].Value, out var minute))
+        {
+            return null;
+        }
+        var time = $"{hour}:{minute:00}";
         return time switch
         {
             "7:00" => 1,
@@ -224,6 +283,18 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
         };
     }
 
+    private static DetectedTimeSlot? NearestTimeSlot(
+        OcrLine source,
+        IEnumerable<OcrLine> lines)
+    {
+        return lines
+            .Select(line => (Line: line, Slot: ParseTimeSlot(line.Text)))
+            .Where(item => item.Slot is not null)
+            .OrderBy(item => ProximityScore(source, item.Line))
+            .Select(item => new DetectedTimeSlot(item.Slot!.Value, item.Line.Text))
+            .FirstOrDefault();
+    }
+
     private static string PickSubjectName(
         IEnumerable<OcrLine> lines,
         OcrLine subjectLine,
@@ -234,19 +305,76 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
         return lines
             .Select(line => (line, text: line.Text.Trim()))
             .Where(item => item.text.Length >= 5)
+            .Where(item =>
+                Math.Abs(item.line.CenterX - subjectLine.CenterX) <=
+                Math.Max(220, subjectLine.Width * 2.5))
+            .Where(item => !SubjectCodePattern.IsMatch(item.text) && !ClassCodePattern.IsMatch(item.text))
+            .Where(item => !RoomPattern.IsMatch(item.text))
+            .Where(item => !InstructorPattern.IsMatch(item.text))
             .Where(item => !item.text.Contains(subjectCode, StringComparison.OrdinalIgnoreCase))
             .Where(item => classCode.Length == 0 || !item.text.Contains(classCode, StringComparison.OrdinalIgnoreCase))
             .Where(item => room.Length == 0 || !item.text.Contains(room, StringComparison.OrdinalIgnoreCase))
             .Where(item => ParseDay(item.text) is null && ParseSlot(item.text) is null && !TimePattern.IsMatch(item.text))
             .Where(item => item.text.Count(char.IsLetter) >= 4)
-            .OrderBy(item => Math.Abs(item.line.CenterY - subjectLine.CenterY))
+            .OrderBy(item => ProximityScore(subjectLine, item.line))
             .ThenByDescending(item => item.text.Length)
             .Select(item => item.text)
             .FirstOrDefault() ?? string.Empty;
     }
 
+    private static string PickInstructor(
+        IEnumerable<OcrLine> lines,
+        OcrLine subjectLine)
+    {
+        return lines
+            .Select(line => (line, match: InstructorPattern.Match(line.Text)))
+            .Where(item => item.match.Success)
+            .OrderBy(item => ProximityScore(subjectLine, item.line))
+            .Select(item => item.match.Groups["name"].Value)
+            .FirstOrDefault() ?? string.Empty;
+    }
+
     private static string CompactCode(string raw) =>
         Regex.Replace(raw.ToUpperInvariant(), @"[^A-Z0-9]", string.Empty);
+
+    private static string NormalizeSubjectCode(Match match)
+    {
+        var prefix = CompactCode(match.Groups["prefix"].Value);
+        var number = NormalizeDigitLike(match.Groups["number"].Value);
+        var suffix = CompactCode(match.Groups["suffix"].Value);
+        if (prefix.Length == 5 && prefix.StartsWith("TI", StringComparison.Ordinal))
+        {
+            // The blue book icon next to a course is sometimes read as "TI".
+            prefix = prefix[2..];
+        }
+        else if (prefix.Length == 4 && prefix[0] is 'I' or 'L')
+        {
+            prefix = prefix[1..];
+        }
+        return $"{prefix}{number}{suffix}";
+    }
+
+    private static string NormalizeClassCode(Match match) =>
+        $"{CompactCode(match.Groups["prefix"].Value)}{NormalizeDigitLike(match.Groups["number"].Value)}";
+
+    private static string NormalizeDigitLike(string raw)
+    {
+        var builder = new StringBuilder(raw.Length);
+        foreach (var character in raw.ToUpperInvariant())
+        {
+            builder.Append(character switch
+            {
+                'I' or 'L' => '1',
+                'O' => '0',
+                'S' => '5',
+                'B' => '8',
+                'Z' => '2',
+                'G' => '6',
+                _ => character,
+            });
+        }
+        return builder.ToString();
+    }
 
     private static string NormalizeRoom(string raw) =>
         NormalizeWhitespace(Regex.Replace(raw.Trim(), @"^(PH[ÒO]NG|ROOM)\s*", string.Empty, RegexOptions.IgnoreCase))
@@ -270,6 +398,8 @@ public sealed class TimetableOcrService(IWebHostEnvironment environment)
     }
 }
 
+internal sealed record DetectedTimeSlot(int Slot, string Source);
+
 public sealed record OcrLine(
     string Text,
     int X,
@@ -290,6 +420,7 @@ public sealed record TimetableOcrCandidate(
     int? DayOfWeek,
     int? Slot,
     string Room,
+    string Instructor,
     double Confidence,
     IReadOnlyList<string> Warnings);
 
